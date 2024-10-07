@@ -40,7 +40,7 @@ enum state{
     STOP
 };
 
-volatile int STOP = FALSE;
+//volatile int STOP = FALSE;
 int fd;
 
 int write_packet_command(unsigned char fieldA, unsigned char fieldC){
@@ -73,48 +73,51 @@ int establish_ua(){
         int bytes;
         if((bytes = read(fd, &byte, sizeof(byte))) < 0){
             attempt_count++;
-            printf("Error receiving UA, attempt %d of %d\n", attempt_count, max_attempts);
-            continue;
+            printf("Error receiving UA, attempt \n");
+            return -1;
         }
         //If we received a byte, let's update the state machine
         if(bytes > 0){
             switch(establish_state){
                 case START:{
+                    printf("START");
                     if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     break;
                 }
                 case FLAG_RECEIVED:{
+                    printf("FLAG_RECEIVED");
                     if(byte == A_SENDER) establish_state = A_RECEIVED;
                     else if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     else establish_state = START;
                     break;
                 }
                 case A_RECEIVED:{
+                    printf("A_RECEIVED");
                     if(byte == CTRL_SET) establish_state = C_RECEIVED;
                     else if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     else establish_state = START;
                     break;
                 }
                 case C_RECEIVED:{
+                    printf("C_RECEIVED");
                     if(byte == (A_SENDER ^ CTRL_SET)) establish_state = BCC_VALID;
                     else if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     else establish_state = START;
                     break;
                 }
                 case BCC_VALID:{
+                    printf("BCC_VALID");
                     if(byte == FLAG) establish_state = STOP;
                     else establish_state = START;
                     break;
                 }
                 default:{
+                    printf("default");
                     establish_state = START;
                 }
             }
         }
-        else{
-            attempt_count++;
-            printf("No bytes recived, attempt %d of %d\n", attempt_count, max_attempts);
-        }
+        
     } 
 
     if(attempt_count >= max_attempts){
@@ -172,8 +175,8 @@ int main(int argc, char *argv[])
 
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
+    newtio.c_cc[VTIME] = 1; // Inter-character timer unused
+    newtio.c_cc[VMIN] = 0;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
     // timeout the reception of the following character(s)
@@ -195,7 +198,7 @@ int main(int argc, char *argv[])
     printf("New termios structure set\n");
 
     establish_ua();
-
+    sleep(1);
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
     {
