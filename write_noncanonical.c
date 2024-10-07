@@ -47,7 +47,6 @@ int alarmEnabled = FALSE;
 int alarmCount = 0;
 int fd;
 
-volatile int STOP = FALSE;
 
 // Alarm function handler
 void alarmHandler(int signal)
@@ -82,7 +81,7 @@ int establish_set(){
     // Set alarm function handler
     (void)signal(SIGALRM, alarmHandler);
     enum state establish_state = START;
-    while(establish_set != STOP && alarmCount <= nRetransmissions){
+    while(establish_state != STOP && alarmCount <= nRetransmissions){
         //If there was an alarm timeout, we need to send the packet again
         if(alarmEnabled == FALSE){
             if(write_packet_command(A_SENDER, CTRL_SET) != 0)return -1;
@@ -101,33 +100,41 @@ int establish_set(){
         if(bytes){
             switch(establish_state){
                 case START:{
+                    printf("estou a escrever START\n");
                     if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     break;
                 }
                 case FLAG_RECEIVED:{
+                    printf("estou a escrever FR\n");
                     if(byte == A_SENDER) establish_state = A_RECEIVED;
                     else if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     else establish_state = START;
                     break;
                 }
                 case A_RECEIVED:{
+                    printf("estou a escrever AR\n");
                     if(byte == CTRL_UA) establish_state = C_RECEIVED;
                     else if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     else establish_state = START;
                     break;
                 }
                 case C_RECEIVED:{
+                    printf("estou a escrever CR\n");
                     if(byte == (A_SENDER ^ CTRL_UA)) establish_state = BCC_VALID;
                     else if(byte == FLAG) establish_state = FLAG_RECEIVED;
                     else establish_state = START;
                     break;
                 }
                 case BCC_VALID:{
-                    if(byte == (FLAG_RECEIVED)) establish_state = STOP;
+                    printf("estou a escrever BCC\n");
+                    if(byte == FLAG){
+                        establish_state = STOP;
+                    }
                     else establish_state = START;
                     break;
                 }
                 default:{
+                    printf("estou a default\n");
                     establish_state = START;
                 }
             }
@@ -155,7 +162,7 @@ int main(int argc, char *argv[])
     {
         printf("Incorrect program usage\n"
                "Usage: %s <SerialPort>\n"
-               "Example: %s /dev/ttyS1\n",
+               "Example: %s /dev/ttyS0\n",
                argv[0],
                argv[0]);
         exit(1);
@@ -190,8 +197,8 @@ int main(int argc, char *argv[])
 
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
+    newtio.c_cc[VTIME] = 1; // Inter-character timer unused
+    newtio.c_cc[VMIN] = 0;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
     // timeout the reception of the following character(s)
@@ -213,7 +220,7 @@ int main(int argc, char *argv[])
     printf("New termios structure set\n");
 
     establish_set();
-
+    sleep(1);
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
     {
