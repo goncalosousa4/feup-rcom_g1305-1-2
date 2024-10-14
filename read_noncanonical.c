@@ -65,14 +65,12 @@ int write_packet_command(unsigned char fieldA, unsigned char fieldC){
 
 int establish_ua(){
     enum state establish_state = START;
-    int attempt_count = 0;
-    const int max_attempts = 5;
-    while(establish_state != STOP && attempt_count < max_attempts){
+    
+    while(establish_state != STOP){
         //Now we will check if we received any byte
         unsigned char byte = 0;
         int bytes;
         if((bytes = read(fd, &byte, sizeof(byte))) < 0){
-            attempt_count++;
             printf("Error receiving UA, attempt \n");
             return -1;
         }
@@ -119,11 +117,6 @@ int establish_ua(){
         }
         
     } 
-
-    if(attempt_count >= max_attempts){
-        printf("Error: Failed to establish connection after %d attempts\n", max_attempts);
-        return -1;
-    }
 
     if(write_packet_command(A_SENDER, CTRL_UA) != 0){
         printf("Error writing UA command\n");
