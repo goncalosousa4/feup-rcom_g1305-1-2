@@ -125,6 +125,51 @@ int establish_ua(){
     return 0;
 }
 
+void receive_data_frame(){
+    unsigned char frame[BUF_SIZE];
+    unsigned char response[BUF_SIZE];
+    int data_valid = 0;
+
+    // Ler a trama de dados
+    int bytes_read = read(fd, &frame, BUF_SIZE);
+
+    if (bytes_read > 0) {
+        // Verificar se é uma trama válida com FLAG e BCC
+        if (frame[0] == FLAG && frame[4] == FLAG) {
+            unsigned char bcc = frame[1] ^ frame[2];
+            if (bcc == frame[3]) {
+                printf("Trama de dados válida recebida.\n");
+                data_valid = 1;
+            } else {
+                printf("Erro no BCC: Trama corrompida.\n");
+            }
+        }
+
+        // Se a trama for válida, enviar um RR (ACK)
+        if (data_valid) {
+            response[0] = FLAG;
+            response[1] = A_RECEIVER;  // Endereço
+            response[2] = 0x05;        // Código de controle para RR (ACK)
+            response[3] = response[1] ^ response[2];  // BCC
+            response[4] = FLAG;
+            write(fd, response, BUF_SIZE);
+            printf("ACK (RR) enviado.\n");
+        }
+        // Se houver um erro, enviar um REJ (NACK)
+        else {
+            response[0] = FLAG;
+            response[1] = A_RECEIVER;
+            response[2] = 0x01;  // Código de controle para REJ (NACK)
+            response[3] = response[1] ^ response[2];  // BCC
+            response[4] = FLAG;
+            write(fd, response, BUF_SIZE);
+            printf("NACK (REJ) enviado.\n");
+        }
+    } else {
+        printf("Erro: Não foi possível ler a trama.\n");
+    }
+}
+
 int main(int argc, char *argv[])
 {
     // Program usage: Uses either COM1 or COM2
@@ -191,6 +236,7 @@ int main(int argc, char *argv[])
     printf("New termios structure set\n");
 
     establish_ua();
+    receive_data_frame();
     sleep(1);
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
