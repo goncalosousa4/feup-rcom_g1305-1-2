@@ -150,7 +150,54 @@ int establish_set(){
     alarm(0);
     return -1;
 }
+void send_data_frame(unsigned char *data, int data_length) {
+    unsigned char frame[BUF_SIZE];
+    unsigned char response[BUF_SIZE];
+    int ack_received = 0;
 
+    // Construir a trama de dados
+    frame[0] = FLAG;  // Início da trama
+    frame[1] = A_SENDER;  // Endereço
+    frame[2] = 0x00;  // Controle (pode usar numeração de trama, se necessário)
+    frame[3] = frame[1] ^ frame[2];  // BCC (controle de erros simples)
+    memcpy(&frame[4], data, data_length);  // Adicionar os dados à trama
+    frame[4 + data_length] = FLAG;  // Fim da trama
+
+    // Enviar a trama de dados
+    int bytes_written = write(fd, frame, 5 + data_length);
+    if (bytes_written < 0) {
+        printf("Erro ao enviar a trama de dados\n");
+        return;
+    }
+
+    // Configurar temporizador para aguardar resposta (ACK ou REJ)
+    alarmEnabled = FALSE;
+    signal(SIGALRM, alarmHandler);  // Configurar função de manuseio de timeout
+    alarm(timeout);
+
+    // Aguardar a resposta do receptor (ACK ou REJ)
+    int bytes_read = read(fd, &response, BUF_SIZE);
+    if (bytes_read > 0) {
+        // Verificar se recebemos um ACK (RR)
+        if (response[2] == 0x05) {  // Exemplo de valor de RR (ACK)
+            printf("ACK recebido, trama enviada corretamente.\n");
+            ack_received = 1;
+        }
+        // Verificar se recebemos um REJ (NACK)
+        else if (response[2] == 0x01) {  // Exemplo de valor de REJ (NACK)
+            printf("REJ recebido, retransmitindo trama...\n");
+        }
+    } else if (alarmEnabled == FALSE) {
+        printf("Timeout, retransmitindo trama...\n");
+    }
+
+    if (!ack_received) {
+        printf("Erro: Não foi recebido ACK após o envio da trama.\n");
+    }
+
+    // Desligar o temporizador
+    alarm(0);
+}
 
 
 int main(int argc, char *argv[])
@@ -220,6 +267,7 @@ int main(int argc, char *argv[])
     printf("New termios structure set\n");
 
     establish_set();
+    send_data_frame();
     sleep(1);
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
