@@ -25,6 +25,7 @@
 #define BCC_VALID 4
 #define STOP 5
 
+
 typedef struct {
     unsigned char FLAG;
     unsigned char A_TRANSMISSOR;
@@ -41,6 +42,7 @@ Protocolo protocolo = {0x7E, 0x03, 0x01, 0x03, 0x07, 0x05, 0x01};
 int fd;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
+int globalTimeout;
 
 
 // Manipulador do alarme
@@ -106,6 +108,7 @@ int configurePort(LinkLayer connectionParameters) {
 int llopen(LinkLayer connectionParameters){
 
     unsigned char buffer[BUFFER_SIZE];
+    
 
     // Configuração da porta serial usando configurePort
     if (configurePort(connectionParameters) < 0) {
@@ -132,6 +135,7 @@ int llopen(LinkLayer connectionParameters){
             // Ativar o alarme
             alarmEnabled = TRUE;
             alarm(connectionParameters.timeout);
+            globalTimeout = connectionParameters.timeout;
 
             // Processar a resposta UA utilizando a máquina de estados
             while (alarmEnabled && currentState != STOP) {
@@ -272,9 +276,80 @@ int llopen(LinkLayer connectionParameters){
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    // TODO
+    unsigned char frame[BUFFER_SIZE];
+    unsigned char response[BUFFER_SIZE];
+    int ack_received = 0;
+    int currentState = START;
 
+    // Construir a trama de dados
+    frame[0] = protocolo.FLAG;  // Início da trama
+    frame[1] = protocolo.A_TRANSMISSOR;  // Endereço
+    frame[2] = 0x00;  // Controle (número de sequência ou controle de fluxo)
+    frame[3] = frame[1] ^ frame[2];  // BCC1 (controle de erros simples)
+    memcpy(&frame[4], buf, bufSize);  // Adicionar os dados à trama
+    frame[4 + bufSize] = protocolo.FLAG;  // Fim da trama
+
+    // Enviar a trama de dados
+    int bytes_written = write(fd, frame, 5 + bufSize);
+    if (bytes_written < 0) {
+        printf("Erro ao enviar a trama de dados\n");
+        return -1;
+    }
+
+    // Configurar temporizador para aguardar resposta (ACK ou REJ)
+    alarmEnabled = FALSE;
+    signal(SIGALRM, alarmHandler);  // Configurar função de manuseio de timeout
+    alarm(globalTimeout);
+
+    // Máquina de estados para processar a resposta do receptor
+    while (currentState != STOP) {
+        int bytes_read = read(fd, response, sizeof(response));
+
+        if (bytes_read > 0) {
+            switch (currentState) {
+                case START:
+                    if (response[0] == protocolo.FLAG) {
+                        currentState = FLAG_RECEIVED;
+                    }
+                    break;
+                case FLAG_RECEIVED:
+                    if (response[1] == protocolo.A_RECEPTOR) {
+                        currentState = A_RECEIVED;
+                    } else {
+                        currentState = START;
+                    }
+                    break;
+                case A_RECEIVED:
+                    if (response[2] == protocolo.CTRL_RR) {
+                        printf("RR recebido, trama enviada corretamente.\n");
+                        currentState = STOP;
+                        ack_received = 1;
+                    } else if (response[2] == protocolo.CTRL_REJ) {
+                        printf("REJ recebido, retransmitindo trama...\n");
+                        currentState = STOP;
+                    } else {
+                        currentState = START;
+                    }
+                    break;
+                default:
+                    currentState = START;
+                    break;
+            }
+        } else if (alarmEnabled == FALSE) {
+            printf("Timeout, retransmitindo trama...\n");
+            currentState = STOP; // Para sair e retransmitir fora do loop
+        }
+    }
+
+    if (!ack_received) {
+        printf("Erro: Não foi recebido ACK após o envio da trama.\n");
+        return -1;
+    }
+
+    // Desligar o temporizador
+    alarm(0);
     return 0;
+
 }
 
 ////////////////////////////////////////////////
