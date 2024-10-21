@@ -11,28 +11,6 @@
 
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
-#define FALSE 0
-#define TRUE 1
-#define BUFFER_SIZE 256
-
-// Definição dos estados 
-#define START 0
-#define FLAG_RECEIVED 1
-#define A_RECEIVED 2
-#define C_RECEIVED 3
-#define BCC_VALID 4
-#define STOP 5
-
-// Estrutura para armazenar os valores do protocolo
-typedef struct {
-    unsigned char FLAG;
-    unsigned char A_TRANSMISSOR;
-    unsigned char A_RECEPTOR;
-    unsigned char CTRL_SET;
-    unsigned char CTRL_UA;
-    unsigned char CTRL_RR;  // RR para ACK
-    unsigned char CTRL_REJ; // REJ para NACK
-} Protocolo;
 
 // Inicialização dos valores do protocolo
 Protocolo protocolo = {0x7E, 0x03, 0x01, 0x03, 0x07, 0x05, 0x01};
