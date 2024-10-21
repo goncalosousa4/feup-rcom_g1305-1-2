@@ -14,8 +14,6 @@
 #define FALSE 0
 #define TRUE 1
 #define BUFFER_SIZE 256
-#define TRANSMITTER 0
-#define RECEIVER 1
 
 // Definição dos estados 
 #define START 0
@@ -52,58 +50,7 @@ void alarmHandler(int signal) {
     printf("Alarme #%d\n", alarmCount);
 }
 
-// Função para configurar a porta serial
-// Parâmetros: estrutura com os parâmetros de conexão
-// Retorna: 0 se a configuração foi bem-sucedida, -1 caso contrário
-int configurePort(LinkLayer connectionParameters) {
-    struct termios oldtio, newtio;
-    
-    // Abrir a porta serial
-    fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
-    if (fd < 0) {
-        perror("Erro ao abrir a porta serial");
-        return -1;
-    }
 
-    // Obter a configuração atual da porta e guardar em oldtio
-    if (tcgetattr(fd, &oldtio) == -1) {
-        perror("Erro ao obter a configuração da porta");
-        return -1;
-    }
-    // Clear struct for new port settings
-    // Configurar a nova estrutura para definir a porta
-    memset(&newtio, 0, sizeof(newtio));
-
-
-    newtio.c_cflag = connectionParameters.baudRate | CS8 | CLOCAL | CREAD;
-    newtio.c_iflag = IGNPAR;
-    newtio.c_oflag = 0;
-
-    // Set input mode
-    newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 1;
-    newtio.c_cc[VMIN] = 0;
-
-    // VTIME e VMIN should be changed in order to protect with a
-    // timeout the reception of the following character(s)
-
-    // Now clean the line and activate the settings for the port
-    // tcflush() discards data written to the object referred to
-    // by fd but not transmitted, or data received but not read,
-    // depending on the value of queue_selector:
-    //   TCIFLUSH - flushes data received but not read.
-
-    // Limpar o buffer da porta e aplicar a nova configuração
-    tcflush(fd, TCIOFLUSH);
-
-    // Set new port settings
-    if (tcsetattr(fd, TCSANOW, &newtio) == -1) {
-        perror("Erro ao configurar a porta");
-        return -1;
-    }
-
-    return 0;
-}
 ////////////////////////////////////////////////
 // LLOPEN - Abre a conexão serial
 ////////////////////////////////////////////////
@@ -113,17 +60,16 @@ int configurePort(LinkLayer connectionParameters) {
 int llopen(LinkLayer connectionParameters){
 
     unsigned char buffer[BUFFER_SIZE];
-    
-
-    // Configuração da porta serial usando configurePort
-    if (configurePort(connectionParameters) < 0) {
+    fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
+    if (fd < 0) {
+        perror("Erro ao abrir a porta serial");
         return -1;
     }
    
     // Configuração do alarme
     (void) signal(SIGALRM, alarmHandler);
 
-    if (connectionParameters.role == TRANSMITTER) {
+    if (connectionParameters.role == LlTx) {
         // Construir e enviar a trama SET
         unsigned char setFrame[5] = {protocolo.FLAG, protocolo.A_TRANSMISSOR, protocolo.CTRL_SET, protocolo.A_TRANSMISSOR ^ protocolo.CTRL_SET, protocolo.FLAG};
         // Estado inicial da máquina de estados
@@ -134,7 +80,7 @@ int llopen(LinkLayer connectionParameters){
         for (int i = 0; i < connectionParameters.nRetransmissions; i++) {
             // Reiniciar o estado e enviar a trama SET
             alarmEnabled = FALSE;
-            write(fd, setFrame, sizeof(setFrame));
+            writeBytesSerialPort(fd, setFrame, sizeof(setFrame));
             printf("Trama SET enviada (Tentativa %d)\n", i + 1);
 
 
@@ -146,7 +92,7 @@ int llopen(LinkLayer connectionParameters){
             // Processar a resposta UA usando a máquina de estados
             while (alarmEnabled && currentState != STOP) {
                 unsigned char byte = 0;
-                res = read(fd, &byte, sizeof(byte));
+                res = readByteSerialPort(fd, &byte);
                 if (res < 0) {
                     perror("Erro ao ler a trama");
                     return -1;
@@ -209,11 +155,11 @@ int llopen(LinkLayer connectionParameters){
         printf("Erro: não foi possível estabelecer a conexão após várias tentativas\n");
         return -1;
     }
-    else if (connectionParameters.role == RECEIVER) {
+    else if (connectionParameters.role == LlRx) {
         int currentState = START;
         while (1) {
             unsigned char byte = 0;
-            int res = read(fd, &byte, sizeof(byte));
+            int res = readByteSerialPort(fd, &byte);
             if (res < 0) {
                 perror("Erro ao ler a trama");
                 return -1;
@@ -249,7 +195,7 @@ int llopen(LinkLayer connectionParameters){
                         if (byte == protocolo.FLAG) {
                             currentState = STOP;
                             unsigned char uaFrame[5] = {protocolo.FLAG, protocolo.A_RECEPTOR, protocolo.CTRL_UA, protocolo.A_RECEPTOR ^ protocolo.CTRL_UA, protocolo.FLAG};
-                            write(fd, uaFrame, sizeof(uaFrame));
+                            writeBytesSerialPort(fd, uaFrame, sizeof(uaFrame));
                             printf("Trama UA enviada\n");
                             return fd;
                         } else {
@@ -266,11 +212,6 @@ int llopen(LinkLayer connectionParameters){
     }
 
     return -1;
-    /*if (openSerialPort(connectionParameters.serialPort,
-                       connectionParameters.baudRate) < 0)
-    {
-        return -1;
-    }*/
 
 }
 
@@ -353,7 +294,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         // Máquina de estados para processar a resposta do receptor
         while (currentState != STOP && alarmEnabled) {
-            int bytes_read = read(fd, response, sizeof(response));
+            int bytes_read =  readByteSerialPort(fd, &byte);
 
             if (bytes_read > 0) {
                 switch (currentState) {
@@ -425,7 +366,7 @@ int llread(unsigned char *packet)
 
     while (!received_packet) {
         // Ler um byte da porta serial
-        int bytes_read = read(fd, &frame[index], 1);
+        int bytes_read =  readByteSerialPort(fd, &frame[index], 1);
         if (bytes_read < 0) {
             perror("Erro ao ler a trama");
             return -1; // Retorna erro se a leitura falhar
@@ -506,7 +447,7 @@ int llread(unsigned char *packet)
                             response[2] = protocolo.CTRL_RR;
                             response[3] = response[1] ^ response[2];
                             response[4] = protocolo.FLAG;
-                            write(fd, response, 5);
+                            writeBytesSerialPort(fd, response, sizeof(response));
 
                             // Indicar que o pacote foi recebido corretamente
                             received_packet = 1;
@@ -522,7 +463,7 @@ int llread(unsigned char *packet)
                             response[2] = protocolo.CTRL_REJ;
                             response[3] = response[1] ^ response[2];
                             response[4] = protocolo.FLAG;
-                            write(fd, response, 5);
+                            writeBytesSerialPort(fd, response, sizeof(response));
                             currentState = START;
                         }
                     } else {
@@ -557,12 +498,12 @@ int llclose(int showStatistics)
     unsigned char byte;
 
     // Se o role for de transmissor (TRANSMITTER)
-    if (connectionP.role == TRANSMITTER) {
+    if (connectionP.role == LlTx) {
         // Transmissor tenta fechar a conexão enviando DISC
         while (retransmitions > 0 && state != STOP) {
             // Construir e enviar a trama DISC
             unsigned char discFrame[5] = {protocolo.FLAG, protocolo.A_TRANSMISSOR, 0x0B, protocolo.A_TRANSMISSOR ^ 0x0B, protocolo.FLAG};
-            write(fd, discFrame, sizeof(discFrame));
+            writeBytesSerialPort(fd, discFrame, sizeof(discFrame));
             printf("Trama DISC enviada (Tentativa %d)\n", connectionP.nRetransmissions - retransmitions + 1);
 
             // Ativar o alarme
@@ -573,7 +514,7 @@ int llclose(int showStatistics)
 
             // Processar a resposta (esperando DISC de volta)
             while (alarmEnabled && state != STOP) {
-                if (read(fd, &byte, 1) > 0) {
+                if ( readByteSerialPort(fd, &byte); > 0) {
                     switch (state) {
                         case START:
                             // Verifica se o FLAG inicial é recebido
@@ -618,13 +559,13 @@ int llclose(int showStatistics)
 
         // Enviar a trama UA para finalizar o processo
         unsigned char uaFrame[5] = {protocolo.FLAG, protocolo.A_TRANSMISSOR, protocolo.CTRL_UA, protocolo.A_TRANSMISSOR ^ protocolo.CTRL_UA, protocolo.FLAG};
-        write(fd, uaFrame, sizeof(uaFrame));
+        writeBytesSerialPort(fd, uaFrame, sizeof(uaFrame));
         printf("Trama UA enviada para finalizar\n");
 
-    } else if (connectionP.role == RECEIVER) {
+    } else if (connectionP.role == LlRx) {
         // Receptor espera a trama DISC do transmissor
         while (state != STOP) {
-            if (read(fd, &byte, 1) > 0) {
+            if (readByteSerialPort(fd, &byte) > 0) {
                 switch (state) {
                     case START:
                     // Verifica se o FLAG inicial é recebido
@@ -662,13 +603,13 @@ int llclose(int showStatistics)
 
         // Enviar a trama DISC de volta para confirmar a desconexão
         unsigned char discFrame[5] = {protocolo.FLAG, protocolo.A_RECEPTOR, 0x0B, protocolo.A_RECEPTOR ^ 0x0B, protocolo.FLAG};
-        write(fd, discFrame, sizeof(discFrame));
+        writeBytesSerialPort(fd, discFrame, sizeof(discFrame));
         printf("Trama DISC enviada para confirmar desconexão\n");
 
         // Esperar pela trama UA do transmissor
         state = START;
         while (state != STOP) {
-            if (read(fd, &byte, 1) > 0) {
+            if (readByteSerialPort(fd, &byte) > 0) {
                 switch (state) {
                     case START:
                     // Verifica se o FLAG inicial é recebido
@@ -712,13 +653,12 @@ int llclose(int showStatistics)
         printf("\n---ESTATÍSTICAS---\n\n Número de timeouts: %d\n", alarmCount);
     }
 
-    // Restaurar a configuração da porta
-    if (tcsetattr(fd, TCSANOW, &oldtio) == -1) {
-        perror("Erro ao restaurar configuração da porta");
+    // Chamar closeSerialPort para fechar a porta serial corretamente
+    if (closeSerialPort(fd) < 0) {
+        perror("Erro ao fechar a porta serial");
         return -1;
     }
 
-    close(fd);
     return 0;
     
 }
