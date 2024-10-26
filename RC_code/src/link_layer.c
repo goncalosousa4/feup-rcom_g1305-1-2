@@ -1,4 +1,4 @@
-// Link layer protocol implementation
+// Implementação do protocolo da camada de enlace
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,10 +7,12 @@
 #include <termios.h>
 #include <signal.h>
 #include "link_layer.h"
+#include "link_layer_aux.h"
 #include "serial_port.h"
 
 // MISC
-#define _POSIX_SOURCE 1 // POSIX compliant source
+#define _POSIX_SOURCE 1 // Fonte compatível com POSIX
+
 // Definir os estados possíveis usando macros
 #define START 0
 #define FLAG_RECEIVED 1
@@ -19,26 +21,14 @@
 #define BCC_VALID 4
 #define STOP 5
 
-
-// Estrutura para armazenar os valores do protocolo
-typedef struct {
-    unsigned char FLAG;
-    unsigned char A_TRANSMISSOR;
-    unsigned char A_RECEPTOR;
-    unsigned char CTRL_SET;
-    unsigned char CTRL_UA;
-    unsigned char CTRL_RR;  // RR para ACK
-    unsigned char CTRL_REJ; // REJ para NACK
-} Protocolo;
-
-// Inicialização dos valores do protocolo
+// Inicializar valores de protocolo
 Protocolo protocolo = {0x7E, 0x03, 0x01, 0x03, 0x07, 0x05, 0x01};
 
+// Variáveis globais para controle
 int fd;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
 int globalTimeout;
-
 
 // Manipulador do alarme para controlar timeouts
 void alarmHandler(int signal) {
@@ -50,7 +40,7 @@ void alarmHandler(int signal) {
 // Função auxiliar para aplicar byte stuffing aos dados enviados
 // Esta função substitui caracteres FLAG e 0x7D nos dados para evitar
 // confusão com o fim e início de trama
-int applyByteStuffing(const unsigned char *input, int length, unsigned char *output) {
+static int applyByteStuffing(const unsigned char *input, int length, unsigned char *output) {
     int stuffedIndex = 0;
     for (int i = 0; i < length; i++) {
         if (input[i] == protocolo.FLAG) {
@@ -68,7 +58,7 @@ int applyByteStuffing(const unsigned char *input, int length, unsigned char *out
 
 // Função auxiliar para validar o campo de verificação BCC2 dos dados recebidos
 // Realiza o cálculo XOR para verificar se os dados recebidos estão corretos
-int validateBCC(const unsigned char *data, int length, unsigned char BCC2) {
+static int validateBCC(const unsigned char *data, int length, unsigned char BCC2) {
     unsigned char calculatedBCC = 0x00;
     for (int i = 0; i < length; i++) {
         calculatedBCC ^= data[i];
@@ -79,7 +69,7 @@ int validateBCC(const unsigned char *data, int length, unsigned char BCC2) {
 // Função auxiliar para tratar a resposta do receptor (RR, REJ ou UA)
 // Esta função processa a resposta do receptor, mudando o estado
 // conforme os bytes recebidos e o campo de controle esperado
-int handleResponse(int expectedControlField) {
+static int handleResponse(int expectedControlField) {
     unsigned char byte;
     int currentState = START;
     while (alarmEnabled && currentState != STOP) {

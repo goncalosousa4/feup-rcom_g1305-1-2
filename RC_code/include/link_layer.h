@@ -4,26 +4,6 @@
 #ifndef _LINK_LAYER_H_
 #define _LINK_LAYER_H_
 
-
-// SIZE of maximum acceptable payload.
-// Maximum number of bytes that application layer should send to link layer
-#define MAX_PAYLOAD_SIZE 1000
-
-// MISC
-#define FALSE 0
-#define TRUE 1
-#define BUFFER_SIZE 256
-
-// Definir os estados possíveis usando macros
-#define START 0
-#define FLAG_RECEIVED 1
-#define A_RECEIVED 2
-#define C_RECEIVED 3
-#define BCC_VALID 4
-#define STOP 5
-
-
-
 typedef enum
 {
     LlTx,
@@ -39,20 +19,13 @@ typedef struct
     int timeout;
 } LinkLayer;
 
-// Estrutura para armazenar os valores do protocolo
-typedef struct {
-    unsigned char FLAG;
-    unsigned char A_TRANSMISSOR;
-    unsigned char A_RECEPTOR;
-    unsigned char CTRL_SET;
-    unsigned char CTRL_UA;
-    unsigned char CTRL_RR;  // RR para ACK
-    unsigned char CTRL_REJ; // REJ para NACK
-} Protocolo;
+// SIZE of maximum acceptable payload.
+// Maximum number of bytes that application layer should send to link layer
+#define MAX_PAYLOAD_SIZE 1000
 
-
-// Declarar manipulador do alarme
-void alarmHandler(int signal);
+// MISC
+#define FALSE 0
+#define TRUE 1
 
 // Open a connection using the "port" parameters defined in struct linkLayer.
 // Return "1" on success or "-1" on error.
