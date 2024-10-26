@@ -61,7 +61,7 @@ void applicationLayer(const char *serialPort, const char *mode, int baudRate, in
 }
 
 // Função para iniciar a transmissão de um ficheiro
-int iniciarTransmissao(const char *filename) {
+static int iniciarTransmissao(const char *filename) {
     // Abrir o ficheiro em modo de leitura binária
     FILE *file = abrirArquivo(filename, "rb");
     if (file == NULL) return -1;
@@ -89,7 +89,7 @@ int iniciarTransmissao(const char *filename) {
 }
 
 // Função para iniciar a recepção de um ficheiro
-int iniciarRecepcao(const char *filename) {
+static int iniciarRecepcao(const char *filename) {
     FILE *file = abrirArquivo(filename, "wb");
     if (file == NULL) return -1;
 
@@ -115,7 +115,7 @@ int iniciarRecepcao(const char *filename) {
 }
 
 // Função para abrir um ficheiro
-FILE* abrirArquivo(const char *filename, const char *mode) {
+static FILE* abrirArquivo(const char *filename, const char *mode) {
     FILE *file = fopen(filename, mode);
     if (file == NULL) {
         perror("Erro ao abrir o ficheiro\n");
@@ -124,7 +124,7 @@ FILE* abrirArquivo(const char *filename, const char *mode) {
 }
 
 // Função para calcular o tamanho do ficheiro
-long calcularTamanhoArquivo(FILE *file) {
+static long calcularTamanhoArquivo(FILE *file) {
     fseek(file, 0, SEEK_END);
     long size = ftell(file);
     fseek(file, 0, SEEK_SET);
@@ -132,7 +132,7 @@ long calcularTamanhoArquivo(FILE *file) {
 }
 
 // Função para enviar um pacote de controlo de início ou fim
-int enviarPacoteControle(unsigned char controlFlag, const char *filename, long fileSize) {
+static int enviarPacoteControle(unsigned char controlFlag, const char *filename, long fileSize) {
     unsigned char *packet = buildControlPacket(controlFlag, filename, fileSize);
     int result = verificarEnvioPacote(packet, strlen((char *)packet) + 1);
     free(packet);
@@ -140,7 +140,7 @@ int enviarPacoteControle(unsigned char controlFlag, const char *filename, long f
 }
 
 // Função para criar um pacote de controle (inicio/fim)
-unsigned char *buildControlPacket(unsigned char controlType, const char *filename, long fileSize) {
+static unsigned char *buildControlPacket(unsigned char controlType, const char *filename, long fileSize) {
     unsigned char *packet = malloc(512);
     int index = 0;
 
@@ -162,7 +162,7 @@ unsigned char *buildControlPacket(unsigned char controlType, const char *filenam
 }
 
 // Função para criar um pacote de dados
-unsigned char *criarPacoteDados(unsigned char sequenceNumber, const unsigned char *data, int dataSize) {
+static unsigned char *criarPacoteDados(unsigned char sequenceNumber, const unsigned char *data, int dataSize) {
     unsigned char *packet = malloc(dataSize + 4);
 
     packet[0] = 0x01;
@@ -175,7 +175,7 @@ unsigned char *criarPacoteDados(unsigned char sequenceNumber, const unsigned cha
 }
 
 // Função auxiliar para verificar a transmissão de pacotes
-int verificarEnvioPacote(unsigned char *packet, int packetSize) {
+static int verificarEnvioPacote(unsigned char *packet, int packetSize) {
     if (llwrite(packet, packetSize) < 0) {
         perror("Erro ao enviar o pacote\n");
         return -1;
@@ -184,6 +184,6 @@ int verificarEnvioPacote(unsigned char *packet, int packetSize) {
 }
 
 // Função para verificar e atualizar o número de sequência
-unsigned char sequenceHandler(unsigned char sequenceNumber) {
+static unsigned char sequenceHandler(unsigned char sequenceNumber) {
     return (sequenceNumber + 1) % 256;
 }
