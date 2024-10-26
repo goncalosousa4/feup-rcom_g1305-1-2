@@ -11,6 +11,25 @@
 
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
+// Definir os estados possíveis usando macros
+#define START 0
+#define FLAG_RECEIVED 1
+#define A_RECEIVED 2
+#define C_RECEIVED 3
+#define BCC_VALID 4
+#define STOP 5
+
+
+// Estrutura para armazenar os valores do protocolo
+typedef struct {
+    unsigned char FLAG;
+    unsigned char A_TRANSMISSOR;
+    unsigned char A_RECEPTOR;
+    unsigned char CTRL_SET;
+    unsigned char CTRL_UA;
+    unsigned char CTRL_RR;  // RR para ACK
+    unsigned char CTRL_REJ; // REJ para NACK
+} Protocolo;
 
 // Inicialização dos valores do protocolo
 Protocolo protocolo = {0x7E, 0x03, 0x01, 0x03, 0x07, 0x05, 0x01};
@@ -28,19 +47,88 @@ void alarmHandler(int signal) {
     printf("Alarme #%d\n", alarmCount);
 }
 
+// Função auxiliar para aplicar byte stuffing aos dados enviados
+// Esta função substitui caracteres FLAG e 0x7D nos dados para evitar
+// confusão com o fim e início de trama
+int applyByteStuffing(const unsigned char *input, int length, unsigned char *output) {
+    int stuffedIndex = 0;
+    for (int i = 0; i < length; i++) {
+        if (input[i] == protocolo.FLAG) {
+            output[stuffedIndex++] = 0x7D;
+            output[stuffedIndex++] = 0x5E;
+        } else if (input[i] == 0x7D) {
+            output[stuffedIndex++] = 0x7D;
+            output[stuffedIndex++] = 0x5D;
+        } else {
+            output[stuffedIndex++] = input[i];
+        }
+    }
+    return stuffedIndex;
+}
+
+// Função auxiliar para validar o campo de verificação BCC2 dos dados recebidos
+// Realiza o cálculo XOR para verificar se os dados recebidos estão corretos
+int validateBCC(const unsigned char *data, int length, unsigned char BCC2) {
+    unsigned char calculatedBCC = 0x00;
+    for (int i = 0; i < length; i++) {
+        calculatedBCC ^= data[i];
+    }
+    return calculatedBCC == BCC2;
+}
+
+// Função auxiliar para tratar a resposta do receptor (RR, REJ ou UA)
+// Esta função processa a resposta do receptor, mudando o estado
+// conforme os bytes recebidos e o campo de controle esperado
+int handleResponse(int expectedControlField) {
+    unsigned char byte;
+    int currentState = START;
+    while (alarmEnabled && currentState != STOP) {
+        int res = readByteSerialPort(fd, &byte);
+        if (res > 0) {
+            switch (currentState) {
+                case START:
+                    if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
+                    break;
+                case FLAG_RECEIVED:
+                    if (byte == protocolo.A_RECEPTOR) currentState = A_RECEIVED;
+                    else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
+                    else currentState = START;
+                    break;
+                case A_RECEIVED:
+                    if (byte == expectedControlField) currentState = C_RECEIVED;
+                    else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
+                    else currentState = START;
+                    break;
+                case C_RECEIVED:
+                    if (byte == (protocolo.A_RECEPTOR ^ expectedControlField)) currentState = BCC_VALID;
+                    else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
+                    else currentState = START;
+                    break;
+                case BCC_VALID:
+                    if (byte == protocolo.FLAG) currentState = STOP;
+                    else currentState = START;
+                    break;
+                default:
+                    currentState = START;
+                    break;
+            }
+        }
+    }
+
+     return currentState == STOP ? 0 : -1;
+}
+
 
 ////////////////////////////////////////////////
 // LLOPEN - Abre a conexão serial
 ////////////////////////////////////////////////
-
 // Parâmetros: estrutura com os parâmetros de conexão
 // Retorna: o descritor da porta serial se bem-sucedido, -1 caso contrário
-int llopen(LinkLayer connectionParameters){
-
+int llopen(LinkLayer connectionParameters) {
     unsigned char buffer[BUFFER_SIZE];
     fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
     if (fd < 0) {
-        perror("Erro ao abrir a porta serial");
+        perror("[Erro] ao abrir a porta serial");
         return -1;
     }
    
@@ -50,7 +138,6 @@ int llopen(LinkLayer connectionParameters){
     if (connectionParameters.role == LlTx) {
         // Construir e enviar a trama SET
         unsigned char setFrame[5] = {protocolo.FLAG, protocolo.A_TRANSMISSOR, protocolo.CTRL_SET, protocolo.A_TRANSMISSOR ^ protocolo.CTRL_SET, protocolo.FLAG};
-        // Estado inicial da máquina de estados
         int currentState = START;
         int res;
 
@@ -61,71 +148,20 @@ int llopen(LinkLayer connectionParameters){
             writeBytesSerialPort(fd, setFrame, sizeof(setFrame));
             printf("Trama SET enviada (Tentativa %d)\n", i + 1);
 
-
             // Ativar o alarme para esperar pela resposta UA
             alarmEnabled = TRUE;
             alarm(connectionParameters.timeout);
             globalTimeout = connectionParameters.timeout;
 
-            // Processar a resposta UA usando a máquina de estados
-            while (alarmEnabled && currentState != STOP) {
-                unsigned char byte = 0;
-                res = readByteSerialPort(fd, &byte);
-                if (res < 0) {
-                    perror("Erro ao ler a trama");
-                    return -1;
-                }
-                
-                // Atualizar o estado com base no byte recebido
-                if (res > 0) {
-                    switch (currentState) {
-                        case START:
-                            printf("Estado: START\n");
-                            if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                            break;
-                        case FLAG_RECEIVED:
-                            printf("Estado: FLAG_RECEIVED\n");
-                            if (byte == protocolo.A_RECEPTOR) currentState = A_RECEIVED;
-                            else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                            else currentState = START;
-                            break;
-                        case A_RECEIVED:
-                            printf("Estado: A_RECEIVED\n");
-                            if (byte == protocolo.CTRL_UA) currentState = C_RECEIVED;
-                            else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                            else currentState = START;
-                            break;
-                        case C_RECEIVED:
-                            printf("Estado: C_RECEIVED\n");
-                            if (byte == (protocolo.A_RECEPTOR ^ protocolo.CTRL_UA)) currentState = BCC_VALID;
-                            else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                            else currentState = START;
-                            break;
-                        case BCC_VALID:
-                            printf("Estado: BCC_VALID\n");
-                            if (byte == protocolo.FLAG) {
-                                currentState = STOP;
-                            } else {
-                                currentState = START;
-                            }
-                            break;
-                        default:
-                            printf("Estado: DEFAULT\n");
-                            currentState = START;
-                            break;
-                    }
-                }
-            }
-                
-            // Verificar se a trama UA foi recebida corretamente
-            if (currentState == STOP) {
+            // Processar a resposta UA usando handleResponse
+            if (handleResponse(protocolo.CTRL_UA) == 0) {
                 printf("Trama UA recebida corretamente!\n");
                 alarm(0);  // Desativar o alarme
                 alarmEnabled = FALSE;  // Reiniciar alarmEnabled
                 return fd;
             } else {
                 printf("Não foi recebida a trama UA, a retransmitir...\n");
-                currentState = START; 
+                currentState = START;
                 alarmEnabled = FALSE;
             }
         }
@@ -134,67 +170,12 @@ int llopen(LinkLayer connectionParameters){
         return -1;
     }
     else if (connectionParameters.role == LlRx) {
-        int currentState = START;
-        while (1) {
-            unsigned char byte = 0;
-            int res = readByteSerialPort(fd, &byte);
-            if (res < 0) {
-                perror("Erro ao ler a trama");
-                return -1;
-            }
-
-            // Atualizar o estado com base no byte recebido
-            if (res > 0) {
-                switch (currentState) {
-                    case START:
-                        printf("Estado: START\n");
-                        if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                        break;
-                    case FLAG_RECEIVED:
-                        printf("Estado: FLAG_RECEIVED\n");
-                        if (byte == protocolo.A_TRANSMISSOR) currentState = A_RECEIVED;
-                        else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                        else currentState = START;
-                        break;
-                    case A_RECEIVED:
-                        printf("Estado: A_RECEIVED\n");
-                        if (byte == protocolo.CTRL_SET) currentState = C_RECEIVED;
-                        else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                        else currentState = START;
-                        break;
-                    case C_RECEIVED:
-                        printf("Estado: C_RECEIVED\n");
-                        if (byte == (protocolo.A_TRANSMISSOR ^ protocolo.CTRL_SET)) currentState = BCC_VALID;
-                        else if (byte == protocolo.FLAG) currentState = FLAG_RECEIVED;
-                        else currentState = START;
-                        break;
-                    case BCC_VALID:
-                        printf("Estado: BCC_VALID\n");
-                        if (byte == protocolo.FLAG) {
-                            currentState = STOP;
-                            unsigned char uaFrame[5] = {protocolo.FLAG, protocolo.A_RECEPTOR, protocolo.CTRL_UA, protocolo.A_RECEPTOR ^ protocolo.CTRL_UA, protocolo.FLAG};
-                            writeBytesSerialPort(fd, uaFrame, sizeof(uaFrame));
-                            printf("Trama UA enviada\n");
-                            return fd;
-                        } else {
-                            currentState = START;
-                        }
-                        break;
-                    default:
-                        printf("Estado: DEFAULT\n");
-                        currentState = START;
-                        break;
-                }
-            }
-        }
+        // Usa handleResponse para verificar a resposta SET esperada
+        return handleResponse(protocolo.CTRL_SET) == 0 ? fd : -1;
     }
 
     return -1;
-
 }
-
-
-   
 
 ////////////////////////////////////////////////
 // LLWRITE - Envia uma trama de dados
@@ -204,60 +185,26 @@ int llopen(LinkLayer connectionParameters){
 //   bufSize: tamanho do buffer de dados
 // Retorna:
 //   0 se a trama for enviada com sucesso e confirmada, -1 em caso de erro
-int llwrite(const unsigned char *buf, int bufSize)
-{
+int llwrite(const unsigned char *buf, int bufSize) {
     unsigned char frame[BUFFER_SIZE];
     unsigned char stuffedFrame[BUFFER_SIZE];
-    unsigned char response[BUFFER_SIZE];
     int ack_received = 0;
-    int currentState = START;
-    int stuffedIndex = 4; // Iniciar após os campos FLAG, A, C e BCC1
     int retries = 0;
-    
 
-    // Construir a trama de dados
-    frame[0] = protocolo.FLAG;  // Início da trama
-    frame[1] = protocolo.A_TRANSMISSOR;  // Endereço
-    frame[2] = 0x00;  // Controle (número de sequência ou controle de fluxo)
-    frame[3] = frame[1] ^ frame[2];  // BCC1 (controle de erros simples)
+    // Construir a trama de dados com FLAG, endereço, campo de controle e BCC1
+    frame[0] = protocolo.FLAG;
+    frame[1] = protocolo.A_TRANSMISSOR;
+    frame[2] = 0x00;
+    frame[3] = frame[1] ^ frame[2];
+    memcpy(frame + 4, buf, bufSize);
 
-    // Adicionar os dados à trama e aplicar byte stuffing
-    for (int i = 0; i < bufSize; i++) {
-        // Se o byte for igual ao FLAG ou ao caracter de escape (0x7D), aplicar stuffing
-        if (buf[i] == protocolo.FLAG) {
-            stuffedFrame[stuffedIndex++] = 0x7D; // Carácter de escape
-            stuffedFrame[stuffedIndex++] = 0x5E; // Substituir FLAG por sequência segura
-        } else if (buf[i] == 0x7D) {
-            stuffedFrame[stuffedIndex++] = 0x7D; // Carácter de escape
-            stuffedFrame[stuffedIndex++] = 0x5D;  // Substituir 0x7D por sequência segura
-        } else {
-            stuffedFrame[stuffedIndex++] = buf[i]; // Adicionar byte diretamente
-        }
-    }
+    // Aplicar o byte stuffing aos dados da trama
+    int stuffedIndex = applyByteStuffing(frame, bufSize + 4, stuffedFrame);
+    stuffedFrame[stuffedIndex++] = protocolo.FLAG;
 
-    // Calcular o BCC2 (controle de erros para os dados) e aplicar byte stuffing se necessário 
-    unsigned char BCC2 = 0x00;
-    for (int i = 0; i < bufSize; i++) {
-        // Calcular BCC2 com XOR de todos os bytes dos dados
-        BCC2 ^= buf[i];
-    }
-    // Aplicar byte stuffing ao BCC2, se necessário
-    if (BCC2 == protocolo.FLAG) {
-        stuffedFrame[stuffedIndex++] = 0x7D;
-        stuffedFrame[stuffedIndex++] = 0x5E;
-    } else if (BCC2 == 0x7D) {
-        stuffedFrame[stuffedIndex++] = 0x7D;
-        stuffedFrame[stuffedIndex++] = 0x5D;
-    } else {
-        stuffedFrame[stuffedIndex++] = BCC2;
-    }
-    // Adicionar o FLAG final para indicar o fim da trama
-    stuffedFrame[stuffedIndex++] = protocolo.FLAG;  
-
-
-   // Loop de retransmissão tentar enviar a trama até atingir o limite de tentativas
+    // Loop de retransmissão para enviar a trama até atingir o limite de tentativas
     while (retries < globalTimeout) {
-        // Enviar a trama de dados com byte stuffing aplicado
+        // Enviar a trama com stuffing aplicado
         int bytes_written = write(fd, stuffedFrame, stuffedIndex);
         if (bytes_written < 0) {
             printf("Erro ao enviar a trama de dados\n");
@@ -265,54 +212,13 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
         printf("Trama enviada (tentativa %d)\n", retries + 1);
 
-        // Configurar temporizador para aguardar resposta (ACK ou REJ)
+        // Configurar alarme e aguardar resposta (RR ou REJ)
         alarmEnabled = FALSE;
-        signal(SIGALRM, alarmHandler); 
+        signal(SIGALRM, alarmHandler);
         alarm(globalTimeout);
 
-        // Máquina de estados para processar a resposta do receptor
-        while (currentState != STOP && alarmEnabled) {
-            int bytes_read =  readByteSerialPort(fd, &byte);
-
-            if (bytes_read > 0) {
-                switch (currentState) {
-                    case START:
-                        if (response[0] == protocolo.FLAG) {
-                            currentState = FLAG_RECEIVED;
-                        }
-                        break;
-                    case FLAG_RECEIVED:
-                        if (response[1] == protocolo.A_RECEPTOR) {
-                            currentState = A_RECEIVED;
-                        } else {
-                            currentState = START;
-                        }
-                        break;
-                    case A_RECEIVED:
-                        // Verificar se o byte de controle é RR (ACK) ou REJ (NACK)
-                        if (response[2] == protocolo.CTRL_RR) {
-                            printf("RR recebido, trama enviada corretamente.\n");
-                            currentState = STOP;
-                            ack_received = 1;// Indicar que o ACK foi recebido com sucesso
-                        } else if (response[2] == protocolo.CTRL_REJ) {
-                            printf("REJ recebido, retransmitindo trama...\n");
-                            currentState = STOP; // Reiniciar para retransmissão
-                        } else {
-                            currentState = START; // Reiniciar se não for o byte esperado
-                        }
-                        break;
-                    default:
-                        currentState = START;
-                        break;
-                }
-            } else if (!alarmEnabled) {
-                printf("Timeout, retransmitindo trama...\n");
-                break;
-            }
-        }
-        // Se o ACK foi recebido, desativar o alarme e retornar sucesso
-        if (ack_received) {
-            // Desligar o temporizador e sair se o ACK foi recebido
+        // Processar resposta usando handleResponse para verificar RR
+        if (handleResponse(protocolo.CTRL_RR) == 0) {
             alarm(0);
             return 0;
         }
@@ -333,119 +239,57 @@ int llwrite(const unsigned char *buf, int bufSize)
 // Retorna:
 //   O tamanho do pacote de dados (sem FLAG, A, C, e BCC1) se for recebido corretamente,
 //   -1 em caso de erro.
-int llread(unsigned char *packet)
-{
+int llread(unsigned char *packet) {
     unsigned char frame[BUFFER_SIZE];
-    unsigned char response[5];
-    int currentState = START;
-    int index = 0;
+    unsigned char destuffedFrame[BUFFER_SIZE];
     unsigned char BCC2 = 0x00;
+    int index = 0;
     int received_packet = 0;
 
     while (!received_packet) {
         // Ler um byte da porta serial
-        int bytes_read =  readByteSerialPort(fd, &frame[index], 1);
+        int bytes_read = readByteSerialPort(fd, &frame[index], 1);
         if (bytes_read < 0) {
             perror("Erro ao ler a trama");
-            return -1; // Retorna erro se a leitura falhar
+            return -1;
         }
 
         if (bytes_read > 0) {
             // Máquina de estados para processar cada byte recebido
             switch (currentState) {
                 case START:
-                    // Verificar se recebemos o FLAG inicial
-                    if (frame[index] == protocolo.FLAG) {
-                        currentState = FLAG_RECEIVED;
-                    }
+                    if (frame[index] == protocolo.FLAG) currentState = FLAG_RECEIVED;
                     break;
                 case FLAG_RECEIVED:
-                    // Verificar se o byte é o endereço esperado (A_TRANSMISSOR)
-                    if (frame[index] == protocolo.A_TRANSMISSOR) {
-                        currentState = A_RECEIVED;
-                    } else if (frame[index] == protocolo.FLAG) {
-                        // Continuar no estado FLAG_RECEIVED se receber outro FLAG
-                        currentState = FLAG_RECEIVED;
-                    } else {
-                        currentState = START;
-                    }
+                    if (frame[index] == protocolo.A_TRANSMISSOR) currentState = A_RECEIVED;
+                    else if (frame[index] == protocolo.FLAG) currentState = FLAG_RECEIVED;
+                    else currentState = START;
                     break;
                 case A_RECEIVED:
-                // Verificar se o byte é o valor de controle para dados
-                    if (frame[index] == 0x00) {  
-                        currentState = C_RECEIVED;
-                    } else if (frame[index] == protocolo.FLAG) {
-                        currentState = FLAG_RECEIVED;
-                    } else {
-                        currentState = START;
-                    }
+                    if (frame[index] == 0x00) currentState = C_RECEIVED;
+                    else if (frame[index] == protocolo.FLAG) currentState = FLAG_RECEIVED;
+                    else currentState = START;
                     break;
                 case C_RECEIVED:
-                    // Verificar se o BCC1 é válido (A_TRANSMISSOR ^ Controle)
-                    if (frame[index] == (protocolo.A_TRANSMISSOR ^ 0x00)) {
-                        currentState = BCC_VALID;
-                    } else if (frame[index] == protocolo.FLAG) {
-                        currentState = FLAG_RECEIVED;
-                    } else {
-                        currentState = START;
-                    }
+                    if (frame[index] == (protocolo.A_TRANSMISSOR ^ 0x00)) currentState = BCC_VALID;
+                    else if (frame[index] == protocolo.FLAG) currentState = FLAG_RECEIVED;
+                    else currentState = START;
                     break;
                 case BCC_VALID:
-                    // Verificar se recebemos o FLAG de fechamento e calcular o BCC2
                     if (frame[index] == protocolo.FLAG) {
-                        // Realizar o byte destuffing antes de verificar o BCC2
-                        unsigned char destuffedFrame[BUFFER_SIZE];
-                        int destuffedIndex = 0;
-                        // Loop para destuffing dos bytes recebidos
-                        for (int i = 4; i < index; i++) {
-                            if (frame[i] == 0x7D) {
-                                // Substituir sequências stuffed pelos valores originais
-                                if (frame[i + 1] == 0x5E) {
-                                    destuffedFrame[destuffedIndex++] = 0x7E;
-                                    i++; // Ignorar o próximo byte
-                                } else if (frame[i + 1] == 0x5D) {
-                                    destuffedFrame[destuffedIndex++] = 0x7D;
-                                    i++; // Ignorar o próximo byte
-                                }
-                            } else {
-                                destuffedFrame[destuffedIndex++] = frame[i];
-                            }
-                        }
-
-                        // Calcular o BCC2 usando o frame destuffed
-                        for (int i = 0; i < destuffedIndex - 1; i++) {
-                            BCC2 ^= destuffedFrame[i];
-                        }
-
-                        // Verificar se o BCC2 é válido
-                        if (BCC2 == destuffedFrame[destuffedIndex - 1]) {
-                            printf("Trama recebida corretamente!\n");
-                            response[0] = protocolo.FLAG;
-                            response[1] = protocolo.A_RECEPTOR;
-                            response[2] = protocolo.CTRL_RR;
-                            response[3] = response[1] ^ response[2];
-                            response[4] = protocolo.FLAG;
-                            writeBytesSerialPort(fd, response, sizeof(response));
-
-                            // Indicar que o pacote foi recebido corretamente
-                            received_packet = 1;
-
-                            // Copiar os dados destuffed para o packet
+                        // Realizar o byte destuffing e verificar BCC2
+                        int destuffedIndex = applyByteDestuffing(frame, index, destuffedFrame);
+                        if (validateBCC(destuffedFrame, destuffedIndex - 1, BCC2)) {
                             memcpy(packet, destuffedFrame, destuffedIndex - 1);
-                            return destuffedIndex - 1; // Retornar o tamanho do pacote sem FLAG, A, C e BCC1
+                            received_packet = 1;
+                            return destuffedIndex - 1;
                         } else {
                             printf("Erro: BCC2 incorreto, enviando REJ.\n");
-                             // Enviar REJ (NACK) se o BCC2 não for válido
-                            response[0] = protocolo.FLAG;
-                            response[1] = protocolo.A_RECEPTOR;
-                            response[2] = protocolo.CTRL_REJ;
-                            response[3] = response[1] ^ response[2];
-                            response[4] = protocolo.FLAG;
-                            writeBytesSerialPort(fd, response, sizeof(response));
+                            unsigned char rejFrame[5] = {protocolo.FLAG, protocolo.A_RECEPTOR, protocolo.CTRL_REJ, protocolo.A_RECEPTOR ^ protocolo.CTRL_REJ, protocolo.FLAG};
+                            writeBytesSerialPort(fd, rejFrame, sizeof(rejFrame));
                             currentState = START;
                         }
                     } else {
-                        // Continuar recebendo bytes até encontrar o FLAG de fechamento
                         frame[index] = frame[index];
                         index++;
                     }
@@ -467,163 +311,27 @@ int llread(unsigned char *packet)
 //   showStatistics: indica se as estatísticas devem ser mostradas após o fechamento da conexão
 // Retorna:
 //   0 se a conexão for fechada corretamente, -1 em caso de erro.
-int llclose(int showStatistics)
-{
+int llclose(int showStatistics) {
     // Configurar o manipulador de alarme
     signal(SIGALRM, alarmHandler);
-    int retransmitions = connectionP.nRetransmissions;
     int state = START;
     unsigned char byte;
 
     // Se o role for de transmissor (TRANSMITTER)
     if (connectionP.role == LlTx) {
-        // Transmissor tenta fechar a conexão enviando DISC
-        while (retransmitions > 0 && state != STOP) {
-            // Construir e enviar a trama DISC
+        for (int retransmitions = connectionP.nRetransmissions; retransmitions > 0 && state != STOP; retransmitions--) {
             unsigned char discFrame[5] = {protocolo.FLAG, protocolo.A_TRANSMISSOR, 0x0B, protocolo.A_TRANSMISSOR ^ 0x0B, protocolo.FLAG};
             writeBytesSerialPort(fd, discFrame, sizeof(discFrame));
-            printf("Trama DISC enviada (Tentativa %d)\n", connectionP.nRetransmissions - retransmitions + 1);
-
-            // Ativar o alarme
-            alarmEnabled = TRUE;
             alarm(connectionP.timeout);
-            // Reiniciar a máquina de estados
-            state = START;
-
-            // Processar a resposta (esperando DISC de volta)
-            while (alarmEnabled && state != STOP) {
-                if ( readByteSerialPort(fd, &byte); > 0) {
-                    switch (state) {
-                        case START:
-                            // Verifica se o FLAG inicial é recebido
-                            if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                            break;
-                        case FLAG_RECEIVED:
-                             // Verifica se o byte é o endereço do receptor esperado
-                            if (byte == protocolo.A_RECEPTOR) state = A_RECEIVED;
-                            else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                            else state = START;
-                            break;
-                        case A_RECEIVED:
-                            // Verifica se o byte é o comando DISC
-                            if (byte == 0x0B) state = C_RECEIVED;
-                            else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                            else state = START;
-                            break;
-                        case C_RECEIVED:
-                            // Verifica se o BCC1 é válido (A_RECEPTOR ^ DISC)
-                            if (byte == (protocolo.A_RECEPTOR ^ 0x0B)) state = BCC_VALID;
-                            else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                            else state = START;
-                            break;
-                        case BCC_VALID:
-                            // Verifica se o FLAG final é recebido
-                            if (byte == protocolo.FLAG) state = STOP;
-                            else state = START;
-                            break;
-                        default:
-                            state = START;
-                            break;
-                    }
-                }
-            }
-            retransmitions--;
+            state = handleResponse(0x0B) == 0 ? STOP : START;
         }
-         // Verificar se a trama DISC foi recebida corretamente
-        if (state != STOP) {
-            printf("Erro: não foi possível fechar a conexão após várias tentativas\n");
-            return -1;
-        }
-
-        // Enviar a trama UA para finalizar o processo
         unsigned char uaFrame[5] = {protocolo.FLAG, protocolo.A_TRANSMISSOR, protocolo.CTRL_UA, protocolo.A_TRANSMISSOR ^ protocolo.CTRL_UA, protocolo.FLAG};
         writeBytesSerialPort(fd, uaFrame, sizeof(uaFrame));
-        printf("Trama UA enviada para finalizar\n");
-
     } else if (connectionP.role == LlRx) {
-        // Receptor espera a trama DISC do transmissor
-        while (state != STOP) {
-            if (readByteSerialPort(fd, &byte) > 0) {
-                switch (state) {
-                    case START:
-                    // Verifica se o FLAG inicial é recebido
-                        if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        break;
-                    case FLAG_RECEIVED:
-                    // Verifica se o byte é o endereço do transmissor
-                        if (byte == protocolo.A_TRANSMISSOR) state = A_RECEIVED;
-                        else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        else state = START;
-                        break;
-                    case A_RECEIVED:
-                    // Verifica se o byte é o comando DISC
-                        if (byte == 0x0B) state = C_RECEIVED;
-                        else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        else state = START;
-                        break;
-                    case C_RECEIVED:
-                    // Verifica se o BCC1 é válido (A_TRANSMISSOR ^ DISC)
-                        if (byte == (protocolo.A_TRANSMISSOR ^ 0x0B)) state = BCC_VALID;
-                        else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        else state = START;
-                        break;
-                    case BCC_VALID:
-                    // Verifica se o FLAG final é recebido
-                        if (byte == protocolo.FLAG) state = STOP;
-                        else state = START;
-                        break;
-                    default:
-                        state = START;
-                        break;
-                }
-            }
-        }
-
-        // Enviar a trama DISC de volta para confirmar a desconexão
+        handleResponse(0x0B);
         unsigned char discFrame[5] = {protocolo.FLAG, protocolo.A_RECEPTOR, 0x0B, protocolo.A_RECEPTOR ^ 0x0B, protocolo.FLAG};
         writeBytesSerialPort(fd, discFrame, sizeof(discFrame));
-        printf("Trama DISC enviada para confirmar desconexão\n");
-
-        // Esperar pela trama UA do transmissor
-        state = START;
-        while (state != STOP) {
-            if (readByteSerialPort(fd, &byte) > 0) {
-                switch (state) {
-                    case START:
-                    // Verifica se o FLAG inicial é recebido
-                        if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        break;
-                    case FLAG_RECEIVED:
-                    // Verifica se o byte é o endereço do transmissor
-                        if (byte == protocolo.A_TRANSMISSOR) state = A_RECEIVED;
-                        else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        else state = START;
-                        break;
-                    case A_RECEIVED:
-                    // Verifica se o byte é o comando UA
-                        if (byte == protocolo.CTRL_UA) state = C_RECEIVED;
-                        else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        else state = START;
-                        break;
-                    case C_RECEIVED:
-                    // Verifica se o BCC1 é válido (A_TRANSMISSOR ^ UA)
-                        if (byte == (protocolo.A_TRANSMISSOR ^ protocolo.CTRL_UA)) state = BCC_VALID;
-                        else if (byte == protocolo.FLAG) state = FLAG_RECEIVED;
-                        else state = START;
-                        break;
-                    case BCC_VALID:
-                    // Verifica se o FLAG final é recebido
-                        if (byte == protocolo.FLAG) state = STOP;
-                        else state = START;
-                        break;
-                    default:
-                        state = START;
-                        break;
-                }
-            }
-        }
-
-        printf("Trama UA recebida, conexão fechada\n");
+        handleResponse(protocolo.CTRL_UA);
     }
 
     // Mostrar estatísticas se showStatistics for verdadeiro
@@ -631,12 +339,5 @@ int llclose(int showStatistics)
         printf("\n---ESTATÍSTICAS---\n\n Número de timeouts: %d\n", alarmCount);
     }
 
-    // Chamar closeSerialPort para fechar a porta serial corretamente
-    if (closeSerialPort(fd) < 0) {
-        perror("Erro ao fechar a porta serial");
-        return -1;
-    }
-
-    return 0;
-    
+    return closeSerialPort(fd);
 }
