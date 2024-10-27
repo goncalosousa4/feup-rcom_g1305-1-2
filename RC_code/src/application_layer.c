@@ -1,4 +1,4 @@
-// Application layer protocol implementation
+// Implementação do protocolo da camada de aplicação
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,19 +9,20 @@
 #include <time.h>
 #include "application_layer.h"
 #include "link_layer.h"
+#include "serial_port.h"
 
-////////////////////////////////////////////////
-// APPLICATION LAYER - Gerencia a camada de aplicação
-////////////////////////////////////////////////
-// Parâmetros:
-//   serialPort: porta serial para a comunicação
-//   mode: papel na conexão ("tx" para transmissor, "rx" para receptor)
-//   baudRate: taxa de transmissão da conexão
-//   maxRetries: número máximo de tentativas de retransmissão
-//   waitTime: tempo de espera para retransmissão em segundos
-//   filename: nome do ficheiro a ser transmitido
-// Retorna:
-//   Void. Gerencia toda a transmissão e recepção de dados.
+// Funções auxiliares
+static int iniciarTransmissao(const char *filename);
+static int iniciarRecepcao(const char *filename);
+static FILE* abrirArquivo(const char *filename, const char *mode);
+static long calcularTamanhoArquivo(FILE *file);
+static int enviarPacoteControle(unsigned char controlFlag, const char *filename, long fileSize);
+static unsigned char *criarPacoteControle(unsigned char controlType, const char *filename, long fileSize);
+static unsigned char *criarPacoteDados(unsigned char sequenceNumber, const unsigned char *data, int dataSize);
+static int verificarEnvioPacote(unsigned char *packet, int packetSize);
+static unsigned char proximoNumeroSequencia(unsigned char sequenceNumber);
+
+// Gerencia a camada de aplicação
 void applicationLayer(const char *serialPort, const char *mode, int baudRate, int maxRetries, int waitTime, const char *filename) {
     LinkLayer config;
     strcpy(config.serialPort, serialPort);
@@ -30,14 +31,12 @@ void applicationLayer(const char *serialPort, const char *mode, int baudRate, in
     config.nRetransmissions = maxRetries;
     config.timeout = waitTime;
 
-    // Abre a conexão usando as configurações definidas
     if (llopen(config) < 0) {
         perror("Erro ao abrir a conexão\n");
         llclose(0);
         exit(-1);
     }
 
-    // Inicia a contagem do tempo de transmissão para estatísticas
     clock_t start = clock();
 
     if (config.role == LlTx) {
@@ -52,7 +51,6 @@ void applicationLayer(const char *serialPort, const char *mode, int baudRate, in
         }
     }
 
-    // Calcular o tempo decorrido e imprimir estatísticas
     clock_t end = clock();
     float elapsed = (float)(end - start) / CLOCKS_PER_SEC;
     printf("Tempo de transmissão: %.2f segundos\n", elapsed);
@@ -62,12 +60,11 @@ void applicationLayer(const char *serialPort, const char *mode, int baudRate, in
 
 // Função para iniciar a transmissão de um ficheiro
 static int iniciarTransmissao(const char *filename) {
-    // Abrir o ficheiro em modo de leitura binária
     FILE *file = abrirArquivo(filename, "rb");
     if (file == NULL) return -1;
 
     long fileSize = calcularTamanhoArquivo(file);
-    enviarPacoteControle(0x02, filename, fileSize);
+    if (enviarPacoteControle(0x02, filename, fileSize) < 0) return -1;
 
     unsigned char sequenceNumber = 0;
     unsigned char buffer[256];
@@ -77,9 +74,10 @@ static int iniciarTransmissao(const char *filename) {
         unsigned char *dataPacket = criarPacoteDados(sequenceNumber, buffer, bytesRead);
         if (verificarEnvioPacote(dataPacket, bytesRead + 4) < 0) {
             free(dataPacket);
+            fclose(file);
             return -1;
         }
-        sequenceNumber = sequenceHandler(sequenceNumber);
+        sequenceNumber = proximoNumeroSequencia(sequenceNumber);
         free(dataPacket);
     }
 
@@ -133,14 +131,14 @@ static long calcularTamanhoArquivo(FILE *file) {
 
 // Função para enviar um pacote de controlo de início ou fim
 static int enviarPacoteControle(unsigned char controlFlag, const char *filename, long fileSize) {
-    unsigned char *packet = buildControlPacket(controlFlag, filename, fileSize);
+    unsigned char *packet = criarPacoteControle(controlFlag, filename, fileSize);
     int result = verificarEnvioPacote(packet, strlen((char *)packet) + 1);
     free(packet);
     return result;
 }
 
 // Função para criar um pacote de controle (inicio/fim)
-static unsigned char *buildControlPacket(unsigned char controlType, const char *filename, long fileSize) {
+static unsigned char *criarPacoteControle(unsigned char controlType, const char *filename, long fileSize) {
     unsigned char *packet = malloc(512);
     int index = 0;
 
@@ -184,6 +182,6 @@ static int verificarEnvioPacote(unsigned char *packet, int packetSize) {
 }
 
 // Função para verificar e atualizar o número de sequência
-static unsigned char sequenceHandler(unsigned char sequenceNumber) {
+static unsigned char proximoNumeroSequencia(unsigned char sequenceNumber) {
     return (sequenceNumber + 1) % 256;
 }
