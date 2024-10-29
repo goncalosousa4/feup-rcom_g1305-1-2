@@ -5,17 +5,26 @@
 #include "serial_port.h"
 #include "link_layer.h"
 
-#define FLAG 0x7E
-#define A_TX 0x03
-#define A_RX 0x01
-#define C_SET 0x03
-#define C_UA 0x07
-#define C_DISC 0x0B
-#define C_DATA 0x01
+// Enums para caracteres de controle e comandos de comunicação
+typedef enum {
+    FLAG = 0x7E,
+    ESCAPE = 0x7D
+} ControlCharacters;
 
-#define ESCAPE 0x7D
-#define C_RR 0x05
-#define C_REJ 0x01
+typedef enum {
+    Address_Transmitter = 0x03,
+    Address_Receiver = 0x01
+} Address;
+
+typedef enum {
+    Command_SET = 0x03,
+    Command_UA = 0x07,
+    Command_DISC = 0x0B,
+    Command_DATA = 0x01,
+    Command_RR = 0x05,
+    Command_REJ = 0x01
+} ControlCommands;
+
 unsigned char frame[MAX_FRAME_SIZE];
 
 extern int fd;
@@ -114,7 +123,7 @@ int llopen(LinkLayer connectionParameters) {
         case LlTx: {
             printf("Modo Transmissor: A enviar trama SET para estabelecer conexão...\n");
             while (retransmissions > 0 && state != STOP_R) {
-                sendSupervisionFrame(fd, A_TX, C_SET);
+                sendSupervisionFrame(fd, Address_Transmitter, Command_SET);
                 printf("Trama SET enviada. Aguardando resposta UA...\n");
 
                 alarm(timeout);
@@ -128,16 +137,16 @@ int llopen(LinkLayer connectionParameters) {
                                 if (byte == FLAG) state = FLAG_RCV;
                                 break;
                             case FLAG_RCV:
-                                if (byte == A_RX) state = A_RCV;
+                                if (byte == Address_Receiver) state = A_RCV;
                                 else if (byte != FLAG) state = START;
                                 break;
                             case A_RCV:
-                                if (byte == C_UA) state = C_RCV;
+                                if (byte == Command_UA) state = C_RCV;
                                 else if (byte == FLAG) state = FLAG_RCV;
                                 else state = START;
                                 break;
                             case C_RCV:
-                                if (byte == (A_RX ^ C_UA)) state = BCC1_OK;
+                                if (byte == (Address_Receiver ^ Command_UA)) state = BCC1_OK;
                                 else if (byte == FLAG) state = FLAG_RCV;
                                 else state = START;
                                 break;
@@ -175,16 +184,16 @@ int llopen(LinkLayer connectionParameters) {
                             if (byte == FLAG) state = FLAG_RCV;
                             break;
                         case FLAG_RCV:
-                            if (byte == A_TX) state = A_RCV;
+                            if (byte == Address_Transmitter) state = A_RCV;
                             else if (byte != FLAG) state = START;
                             break;
                         case A_RCV:
-                            if (byte == C_SET) state = C_RCV;
+                            if (byte == Command_SET) state = C_RCV;
                             else if (byte == FLAG) state = FLAG_RCV;
                             else state = START;
                             break;
                         case C_RCV:
-                            if (byte == (A_TX ^ C_SET)) state = BCC1_OK;
+                            if (byte == (Address_Transmitter ^ Command_SET)) state = BCC1_OK;
                             else if (byte == FLAG) state = FLAG_RCV;
                             else state = START;
                             break;
@@ -198,7 +207,7 @@ int llopen(LinkLayer connectionParameters) {
                 }
             }
             printf("Trama SET recebida corretamente. A enviar UA...\n");
-            sendSupervisionFrame(fd, A_RX, C_UA);
+            sendSupervisionFrame(fd, Address_Receiver, Command_UA);
             return fd;
         }
 
@@ -214,32 +223,36 @@ int applyByteStuffing(const unsigned char *input, int length, unsigned char *out
         if (input[i] == FLAG) {
             output[stuffedIndex++] = ESCAPE;
             output[stuffedIndex++] = 0x5E;
-            printf("DEBUG (applyByteStuffing): Aplicando stuffing FLAG -> ESCAPE + 0x5E\n");
+            printf("DEBUG (applyByteStuffing): FLAG detectado, aplicando stuffing -> ESCAPE + 0x5E\n");
         } else if (input[i] == ESCAPE) {
             output[stuffedIndex++] = ESCAPE;
             output[stuffedIndex++] = 0x5D;
-            printf("DEBUG (applyByteStuffing): Aplicando stuffing ESCAPE -> ESCAPE + 0x5D\n");
+            printf("DEBUG (applyByteStuffing): ESCAPE detectado, aplicando stuffing -> ESCAPE + 0x5D\n");
         } else {
             output[stuffedIndex++] = input[i];
+            printf("DEBUG (applyByteStuffing): Byte sem alteração = 0x%X\n", input[i]);
         }
     }
+    printf("DEBUG (applyByteStuffing): Tamanho final após stuffing = %d\n", stuffedIndex);
     return stuffedIndex;
 }
+
 
 int llwrite(const unsigned char *buf, int bufSize) {
     unsigned char frame[MAX_FRAME_SIZE];
     int frameIndex = 0;
 
     frame[frameIndex++] = FLAG;
-    frame[frameIndex++] = A_TX;
-    frame[frameIndex++] = C_DATA;
-    frame[frameIndex++] = A_TX ^ C_DATA;
+    frame[frameIndex++] = Address_Transmitter;
+    frame[frameIndex++] = Command_DATA;
+    frame[frameIndex++] = Address_Transmitter ^ Command_DATA;
 
     unsigned char BCC2 = 0;
     for (int i = 0; i < bufSize; i++) {
         BCC2 ^= buf[i];
     }
 
+    printf("DEBUG (llwrite): BCC2 original = 0x%X\n", BCC2);
     frameIndex += applyByteStuffing(buf, bufSize, &frame[frameIndex]);
 
     unsigned char stuffedBCC2[2];
@@ -247,6 +260,12 @@ int llwrite(const unsigned char *buf, int bufSize) {
     for (int i = 0; i < stuffedBCC2Length; i++) {
         frame[frameIndex++] = stuffedBCC2[i];
     }
+
+    /*printf("DEBUG (llwrite): Frame após stuffing = ");
+    for (int i = 0; i < frameIndex; i++) {
+        printf("0x%X ", frame[i]);
+    }*/
+    printf("\n");
 
     frame[frameIndex++] = FLAG;
 
@@ -273,14 +292,14 @@ int llwrite(const unsigned char *buf, int bufSize) {
                         if (byte == FLAG) state = FLAG_RCV;
                         break;
                     case FLAG_RCV:
-                        if (byte == A_RX) state = A_RCV;
+                        if (byte == Address_Receiver) state = A_RCV;
                         else if (byte != FLAG) state = START;
                         break;
                     case A_RCV:
-                        if (byte == C_RR) {
+                        if (byte == Command_RR) {
                             actualizarEstadisticasEnvio(1);
                             state = STOP_R;
-                        } else if (byte == C_REJ) {
+                        } else if (byte == Command_REJ) {
                             actualizarEstadisticasEnvio(0);
                             state = START;
                         } else if (byte == FLAG) state = FLAG_RCV;
@@ -304,28 +323,38 @@ int llwrite(const unsigned char *buf, int bufSize) {
     printf("Erro: Não foi possível enviar a trama após várias tentativas.\n");
     return -1;
 }
-
 int applyByteDestuffing(const unsigned char *input, int length, unsigned char *output) {
+
     int destuffedIndex = 0;
     int escape = 0;
 
     for (int i = 0; i < length; i++) {
         if (escape) {
-            if (input[i] == 0x5E) output[destuffedIndex++] = FLAG;
-            else if (input[i] == 0x5D) output[destuffedIndex++] = ESCAPE;
+            if (input[i] == 0x5E) {
+                output[destuffedIndex++] = FLAG;
+                printf("DEBUG (applyByteDestuffing): ESCAPE seguido de 0x5E, convertendo para FLAG\n");
+            } else if (input[i] == 0x5D) {
+                output[destuffedIndex++] = ESCAPE;
+                printf("DEBUG (applyByteDestuffing): ESCAPE seguido de 0x5D, convertendo para ESCAPE\n");
+            }
             escape = 0;
         } else if (input[i] == ESCAPE) {
             escape = 1;
+            printf("DEBUG (applyByteDestuffing): Byte ESCAPE detectado, aguardando próximo byte\n");
+        } else if (input[i] == FLAG && i == length - 1) { // Stop at the final FLAG
+            printf("DEBUG (applyByteDestuffing): FLAG final detectado, parando processamento\n");
+            break;
         } else {
             output[destuffedIndex++] = input[i];
+            printf("DEBUG (applyByteDestuffing): Byte sem alteração = 0x%X\n", input[i]);
         }
     }
-
+    printf("DEBUG (applyByteDestuffing): Tamanho final após destuffing = %d\n", destuffedIndex);
     return destuffedIndex;
 }
 
 int llread(unsigned char *packet) {
-    LinkLayerState state = START;
+LinkLayerState state = START;
     unsigned char rawFrame[MAX_FRAME_SIZE];
     int rawIndex = 0;
     unsigned char byte;
@@ -342,16 +371,16 @@ int llread(unsigned char *packet) {
                     if (byte == FLAG) state = FLAG_RCV;
                     break;
                 case FLAG_RCV:
-                    if (byte == A_TX) state = A_RCV;
+                    if (byte == Address_Transmitter) state = A_RCV;
                     else if (byte != FLAG) state = START;
                     break;
                 case A_RCV:
-                    if (byte == C_DATA) state = C_RCV;
+                    if (byte == Command_DATA) state = C_RCV;
                     else if (byte == FLAG) state = FLAG_RCV;
                     else state = START;
                     break;
                 case C_RCV:
-                    if (byte == (A_TX ^ C_DATA)) state = BCC1_OK;
+                    if (byte == (Address_Transmitter ^ Command_DATA)) state = BCC1_OK;
                     else if (byte == FLAG) state = FLAG_RCV;
                     else state = START;
                     break;
@@ -363,22 +392,9 @@ int llread(unsigned char *packet) {
                     break;
                 case DATA:
                     if (byte == FLAG) {
-                        int destuffedSize = applyByteDestuffing(rawFrame, rawIndex, packet);
-                        for (int i = 0; i < destuffedSize; i++) {
-                            BCC2 ^= packet[i];
-                        }
-
-                        if (BCC2 == 0) {
-                            printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
-                            sendSupervisionFrame(fd, A_RX, C_RR);
-                            actualizarEstadisticasRecepcao();
-                            state = STOP_R;
-                        } else {
-                            printf("Erro: BCC2 incorreto. A enviar REJ...\n");
-                            sendSupervisionFrame(fd, A_RX, C_REJ);
-                            actualizarEstadisticasEnvio(0);
-                            return -1;
-                        }
+                        // Stop processing after receiving the final FLAG
+                        printf("DEBUG (llread): FLAG final detectado, terminando leitura de trama\n");
+                        state = STOP_R;
                     } else {
                         rawFrame[rawIndex++] = byte;
                     }
@@ -389,7 +405,27 @@ int llread(unsigned char *packet) {
         }
     }
 
-    return rawIndex;
+    int destuffedSize = applyByteDestuffing(rawFrame, rawIndex, packet);
+
+    // Calculate BCC2 and verify it
+    BCC2 = 0;
+    for (int i = 0; i < destuffedSize - 1; i++) { // Exclude last byte (BCC2)
+        BCC2 ^= packet[i];
+    }
+
+    if (BCC2 == packet[destuffedSize - 1]) { // Check if calculated BCC2 matches received BCC2
+        printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
+        sendSupervisionFrame(fd, Address_Receiver, Command_RR);
+        actualizarEstadisticasRecepcao();
+    } else {
+        printf("Erro: BCC2 incorreto. A enviar REJ...\n");
+        sendSupervisionFrame(fd, Address_Receiver, Command_REJ);
+        actualizarEstadisticasEnvio(0);
+        return -1;
+    }
+
+    printf("DEBUG (llread): Trama completa recebida e processada.\n");
+    return destuffedSize - 1; // Return size excluding BCC2
 }
 
 int llclose(int showStatistics) {
@@ -398,7 +434,7 @@ int llclose(int showStatistics) {
 
     if (currentRole == LlTx) {
         printf("Modo Transmissor: A iniciar encerramento da conexão...\n");
-        sendSupervisionFrame(fd, A_TX, C_DISC);
+        sendSupervisionFrame(fd, Address_Transmitter, Command_DISC);
         printf("Trama DISC enviada. Aguardando resposta DISC do receptor...\n");
 
         while (state != STOP_R) {
@@ -408,16 +444,16 @@ int llclose(int showStatistics) {
                         if (byte == FLAG) state = FLAG_RCV;
                         break;
                     case FLAG_RCV:
-                        if (byte == A_RX) state = A_RCV;
+                        if (byte == Address_Receiver) state = A_RCV;
                         else if (byte != FLAG) state = START;
                         break;
                     case A_RCV:
-                        if (byte == C_DISC) state = C_RCV;
+                        if (byte == Command_DISC) state = C_RCV;
                         else if (byte == FLAG) state = FLAG_RCV;
                         else state = START;
                         break;
                     case C_RCV:
-                        if (byte == (A_RX ^ C_DISC)) state = BCC1_OK;
+                        if (byte == (Address_Receiver ^ Command_DISC)) state = BCC1_OK;
                         else if (byte == FLAG) state = FLAG_RCV;
                         else state = START;
                         break;
@@ -432,7 +468,7 @@ int llclose(int showStatistics) {
         }
         actualizarEstadisticasRecepcao();
         printf("Trama DISC recebida do receptor. A enviar UA para finalizar...\n");
-        sendSupervisionFrame(fd, A_TX, C_UA);
+        sendSupervisionFrame(fd, Address_Transmitter, Command_UA);
     } else if (currentRole == LlRx) {
         printf("Modo Receptor: Aguardando trama DISC do transmissor...\n");
 
@@ -443,16 +479,16 @@ int llclose(int showStatistics) {
                         if (byte == FLAG) state = FLAG_RCV;
                         break;
                     case FLAG_RCV:
-                        if (byte == A_TX) state = A_RCV;
+                        if (byte == Address_Transmitter) state = A_RCV;
                         else if (byte != FLAG) state = START;
                         break;
                     case A_RCV:
-                        if (byte == C_DISC) state = C_RCV;
+                        if (byte == Command_DISC) state = C_RCV;
                         else if (byte == FLAG) state = FLAG_RCV;
                         else state = START;
                         break;
                     case C_RCV:
-                        if (byte == (A_TX ^ C_DISC)) state = BCC1_OK;
+                        if (byte == (Address_Transmitter ^ Command_DISC)) state = BCC1_OK;
                         else if (byte == FLAG) state = FLAG_RCV;
                         else state = START;
                         break;
@@ -467,7 +503,7 @@ int llclose(int showStatistics) {
         }
         actualizarEstadisticasRecepcao();
         printf("Trama DISC recebida do transmissor. A enviar DISC para confirmar desconexão...\n");
-        sendSupervisionFrame(fd, A_RX, C_DISC);
+        sendSupervisionFrame(fd, Address_Receiver, Command_DISC);
 
         state = START;
         while (state != STOP_R) {
@@ -477,16 +513,16 @@ int llclose(int showStatistics) {
                         if (byte == FLAG) state = FLAG_RCV;
                         break;
                     case FLAG_RCV:
-                        if (byte == A_TX) state = A_RCV;
+                        if (byte == Address_Transmitter) state = A_RCV;
                         else if (byte != FLAG) state = START;
                         break;
                     case A_RCV:
-                        if (byte == C_UA) state = C_RCV;
+                        if (byte == Command_UA) state = C_RCV;
                         else if (byte == FLAG) state = FLAG_RCV;
                         else state = START;
                         break;
                     case C_RCV:
-                        if (byte == (A_TX ^ C_UA)) state = BCC1_OK;
+                        if (byte == (Address_Transmitter ^ Command_UA)) state = BCC1_OK;
                         else if (byte == FLAG) state = FLAG_RCV;
                         else state = START;
                         break;
