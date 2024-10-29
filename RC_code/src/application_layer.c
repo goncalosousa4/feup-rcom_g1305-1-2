@@ -1,187 +1,74 @@
-// Implementação do protocolo da camada de aplicação
+// Application layer protocol implementation
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <termios.h>
-#include <time.h>
-#include "application_layer.h"
 #include "link_layer.h"
-#include "serial_port.h"
+#include "application_layer.h"
 
-// Funções auxiliares
-static int iniciarTransmissao(const char *filename);
-static int iniciarRecepcao(const char *filename);
-static FILE* abrirArquivo(const char *filename, const char *mode);
-static long calcularTamanhoArquivo(FILE *file);
-static int enviarPacoteControle(unsigned char controlFlag, const char *filename, long fileSize);
-static unsigned char *criarPacoteControle(unsigned char controlType, const char *filename, long fileSize);
-static unsigned char *criarPacoteDados(unsigned char sequenceNumber, const unsigned char *data, int dataSize);
-static int verificarEnvioPacote(unsigned char *packet, int packetSize);
-static unsigned char proximoNumeroSequencia(unsigned char sequenceNumber);
+void applicationLayer(const char *serialPort, const char *role, int baudrate, int nTries, int timeout, const char *filename) {
+    LinkLayer connectionParameters;
 
-// Gerencia a camada de aplicação
-void applicationLayer(const char *serialPort, const char *mode, int baudRate, int maxRetries, int waitTime, const char *filename) {
-    LinkLayer config;
-    strcpy(config.serialPort, serialPort);
-    config.role = strcmp(mode, "tx") == 0 ? LlTx : LlRx;
-    config.baudRate = baudRate;
-    config.nRetransmissions = maxRetries;
-    config.timeout = waitTime;
+    // Configurar los parámetros de conexión
+    strcpy(connectionParameters.serialPort, serialPort);
+    connectionParameters.baudRate = baudrate;
+    connectionParameters.nRetransmissions = nTries;
+    connectionParameters.timeout = timeout;
+    connectionParameters.role = (strcmp(role, "tx") == 0) ? LlTx : LlRx;
 
-    if (llopen(config) < 0) {
-        perror("Erro ao abrir a conexão\n");
-        llclose(0);
-        exit(-1);
+    printf("Llamando a llopen desde applicationLayer...\n");
+
+    // Llamada a llopen para establecer la conexión
+    int fd = llopen(connectionParameters);
+    if (fd < 0) {
+        fprintf(stderr, "Error en llopen: No se pudo establecer la conexión.\n");
+        return;
     }
 
-    clock_t start = clock();
+    printf("Conexión establecida correctamente en applicationLayer.\n");
 
-    if (config.role == LlTx) {
-        if (iniciarTransmissao(filename) < 0) {
-            perror("Erro durante a transmissão\n");
-            exit(-1);
+    if (connectionParameters.role == LlTx) {  // Modo transmisor
+        // Trama de prueba para verificar stuffing y destuffing
+       unsigned char testFrame[] = {
+    0x7E, 0x45, 0x7D, 0x52,  // Secuencia inicial de prueba con FLAG y ESCAPE
+    0x10, 0x3A, 0x7E, 0x55,  // Bytes de datos adicionales
+    0x7D, 0x5E, 0x20, 0x40,  // FLAG con stuffing aplicado, y otros datos
+    0x30, 0x7E, 0x60, 0x7D,  // Más datos con FLAG y ESCAPE
+    0x5D, 0x50, 0x70, 0x7E   // Secuencia final con FLAG para verificar límite
+    };
+    int frameSize = sizeof(testFrame);
+
+        printf("Enviando trama de prueba para verificar stuffing y destuffing...\n");
+        if (llwrite(testFrame, frameSize) < 0) {
+            fprintf(stderr, "Error en llwrite: No se pudo enviar la trama de prueba.\n");
+            llclose(1);
+            return;
         }
-    } else if (config.role == LlRx) {
-        if (iniciarRecepcao(filename) < 0) {
-            perror("Erro durante a recepção\n");
-            exit(-1);
-        }
-    }
+        printf("Trama de prueba enviada correctamente.\n");
 
-    clock_t end = clock();
-    float elapsed = (float)(end - start) / CLOCKS_PER_SEC;
-    printf("Tempo de transmissão: %.2f segundos\n", elapsed);
+    } else {  // Modo receptor
+        unsigned char buffer[MAX_FRAME_SIZE];
+        int bytesRead;
 
-    llclose(1);
-}
+        printf("Esperando recibir la trama de prueba...\n");
 
-// Função para iniciar a transmissão de um ficheiro
-static int iniciarTransmissao(const char *filename) {
-    FILE *file = abrirArquivo(filename, "rb");
-    if (file == NULL) return -1;
-
-    long fileSize = calcularTamanhoArquivo(file);
-    if (enviarPacoteControle(0x02, filename, fileSize) < 0) return -1;
-
-    unsigned char sequenceNumber = 0;
-    unsigned char buffer[256];
-    int bytesRead;
-
-    while ((bytesRead = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        unsigned char *dataPacket = criarPacoteDados(sequenceNumber, buffer, bytesRead);
-        if (verificarEnvioPacote(dataPacket, bytesRead + 4) < 0) {
-            free(dataPacket);
-            fclose(file);
-            return -1;
-        }
-        sequenceNumber = proximoNumeroSequencia(sequenceNumber);
-        free(dataPacket);
-    }
-
-    enviarPacoteControle(0x03, filename, fileSize);
-    fclose(file);
-    return 0;
-}
-
-// Função para iniciar a recepção de um ficheiro
-static int iniciarRecepcao(const char *filename) {
-    FILE *file = abrirArquivo(filename, "wb");
-    if (file == NULL) return -1;
-
-    unsigned char buffer[512];
-    int packetSize;
-    int recebendo = 1;
-
-    while (recebendo && (packetSize = llread(buffer)) > 0) {
-        switch (buffer[0]) {
-            case 0x01: 
-                fwrite(buffer + 4, sizeof(unsigned char), packetSize - 4, file);
-                break;
-            case 0x03:  
-                recebendo = 0;
-                break;
-            default:
-                break;
+        // Recibir y verificar la trama de prueba
+        bytesRead = llread(buffer);
+        if (bytesRead > 0) {
+            printf("Trama de prueba recibida correctamente. Datos recibidos:\n");
+            for (int i = 0; i < bytesRead; i++) {
+                printf("0x%X ", buffer[i]);
+            }
+            printf("\n");
+        } else {
+            fprintf(stderr, "Error en llread: No se pudo recibir la trama de prueba.\n");
         }
     }
 
-    fclose(file);
-    return 0;
-}
-
-// Função para abrir um ficheiro
-static FILE* abrirArquivo(const char *filename, const char *mode) {
-    FILE *file = fopen(filename, mode);
-    if (file == NULL) {
-        perror("Erro ao abrir o ficheiro\n");
+    // Llamada a llclose para cerrar la conexión
+    printf("Llamando a llclose desde applicationLayer...\n");
+    if (llclose(1) < 0) {
+        fprintf(stderr, "Error en llclose: No se pudo cerrar la conexión correctamente.\n");
+    } else {
+        printf("Conexión cerrada correctamente en applicationLayer.\n");
     }
-    return file;
-}
-
-// Função para calcular o tamanho do ficheiro
-static long calcularTamanhoArquivo(FILE *file) {
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    return size;
-}
-
-// Função para enviar um pacote de controlo de início ou fim
-static int enviarPacoteControle(unsigned char controlFlag, const char *filename, long fileSize) {
-    unsigned char *packet = criarPacoteControle(controlFlag, filename, fileSize);
-    int result = verificarEnvioPacote(packet, strlen((char *)packet) + 1);
-    free(packet);
-    return result;
-}
-
-// Função para criar um pacote de controle (inicio/fim)
-static unsigned char *criarPacoteControle(unsigned char controlType, const char *filename, long fileSize) {
-    unsigned char *packet = malloc(512);
-    int index = 0;
-
-    packet[index++] = controlType;
-    packet[index++] = 0x00;
-    packet[index++] = sizeof(long);
-
-    for (int i = sizeof(long) - 1; i >= 0; i--) {
-        packet[index++] = (fileSize >> (i * 8)) & 0xFF;
-    }
-
-    packet[index++] = 0x01;
-    packet[index++] = strlen(filename);
-
-    for (int i = 0; i < strlen(filename); i++) {
-        packet[index++] = filename[i];
-    }
-    return packet;
-}
-
-// Função para criar um pacote de dados
-static unsigned char *criarPacoteDados(unsigned char sequenceNumber, const unsigned char *data, int dataSize) {
-    unsigned char *packet = malloc(dataSize + 4);
-
-    packet[0] = 0x01;
-    packet[1] = sequenceNumber;
-    packet[2] = (dataSize >> 8) & 0xFF;
-    packet[3] = dataSize & 0xFF;
-
-    memcpy(packet + 4, data, dataSize);
-    return packet;
-}
-
-// Função auxiliar para verificar a transmissão de pacotes
-static int verificarEnvioPacote(unsigned char *packet, int packetSize) {
-    if (llwrite(packet, packetSize) < 0) {
-        perror("Erro ao enviar o pacote\n");
-        return -1;
-    }
-    return 0;
-}
-
-// Função para verificar e atualizar o número de sequência
-static unsigned char proximoNumeroSequencia(unsigned char sequenceNumber) {
-    return (sequenceNumber + 1) % 256;
 }

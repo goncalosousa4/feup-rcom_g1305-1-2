@@ -3,7 +3,7 @@
 
 #ifndef _LINK_LAYER_H_
 #define _LINK_LAYER_H_
-
+#define MAX_FRAME_SIZE 2048
 typedef enum
 {
     LlTx,
