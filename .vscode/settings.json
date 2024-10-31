@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "link_layer.h": "c",
-        "serial_port.h": "c"
+        "serial_port.h": "c",
+        "application_layer.h": "c"
     }
 }
