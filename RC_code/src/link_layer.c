@@ -515,9 +515,9 @@ int llread(unsigned char *packet) {
             // Calcula el CRC de los datos recibidos (excluyendo el último byte, que es el CRC recibido)
             CRC = calculateCRC(packet, destuffedSize - 1);
 
-            if (introduceError(0.05)) {  
+            /*if (introduceError(0.05)) {  
                 packet[0] ^= 0xFF;  
-            }
+            }*/
 
             if (CRC == packet[destuffedSize - 1]) {
                 printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
