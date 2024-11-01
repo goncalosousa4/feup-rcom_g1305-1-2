@@ -35,13 +35,15 @@ LinkLayerRole currentRole;  //Transmissor ou receptor
 
 // Estrutura para armazenar as estatísticas de conexão
 typedef struct {
-    int tramasEnviadas;
+     int tramasEnviadas;
     int tramasRecebidas;
     int tramasRejeitadas;
     int tramasAceitas;
+    int totalBytesTransmitidos;
     double tiempoTransmision; 
     double tiempoRecepcion;   
     double tiempoDesconexion; 
+    double tiempoTransferencia;
 } EstatisticasConexao;
 
 // Instância global para as estatísticas
@@ -58,8 +60,8 @@ typedef enum {
     STOP_R
 } LinkLayerState;
 
-int timeout = 0;                
-int retransmissions = 0;         
+int timeout = 3;                
+int retransmissions = 5;         
 int alarmEnabled = 0;            
 int alarmCount = 0;
 clock_t desconexionStart;
@@ -101,6 +103,7 @@ void mostrarEstatisticas() {
     printf("Tramas Recebidas: %d\n", estatisticas.tramasRecebidas);
     printf("Tramas Rejeitadas: %d\n", estatisticas.tramasRejeitadas);
     printf("Tramas Aceitas: %d\n", estatisticas.tramasAceitas);
+     printf("Total de bytes transmitidos: %d bytes\n", estatisticas.totalBytesTransmitidos);
     printf("Tempo total de transmissão: %.2f ms\n", estatisticas.tiempoTransmision);
     printf("Tempo total de receção: %.2f ms\n", estatisticas.tiempoRecepcion);
     printf("Tempo total de desconexão: %.2f ms\n", estatisticas.tiempoDesconexion);
@@ -123,6 +126,10 @@ unsigned char calculateCRC(const unsigned char *buf, int bufSize) {
     return crc;
 }
 
+// Simula un error en los datos con una probabilidad dada
+int introduceError(float probability) {
+    return ((float)rand() / RAND_MAX) < probability;
+}
 
 ////////////////////////////////////////////////
 // LLOPEN - Abre a conexão serial
@@ -304,7 +311,9 @@ int llwrite(const unsigned char *buf, int bufSize) {
     printf("DEBUG: Iniciando función llwrite.\n");
     unsigned char frame[MAX_FRAME_SIZE];
     int frameIndex = 0;
-
+    estatisticas.tiempoTransferencia = (double)clock();
+    estatisticas.totalBytesTransmitidos += bufSize;
+    
     // Início da trama com FLAG e endereço de transmissão
     frame[frameIndex++] = FLAG;
     frame[frameIndex++] = Address_Transmitter;
@@ -313,19 +322,18 @@ int llwrite(const unsigned char *buf, int bufSize) {
     frame[frameIndex++] = Command_DATA;
     frame[frameIndex++] = Address_Transmitter ^ Command_DATA;
 
-    // Calcula o BCC2 aplicando XOR em todos os bytes do buffer de dado
-    unsigned char BCC2 = 0;
-    for (int i = 0; i < bufSize; i++){
-        BCC2 ^= buf[i];
-    }
-
+    
+    // Calcula el CRC de los datos
+    unsigned char CRC = calculateCRC(buf, bufSize);
     // Aplica byte stuffing ao conteúdo dos dados
     frameIndex += applyByteStuffing(buf, bufSize, &frame[frameIndex]);
 
     // Aplica byte stuffing ao BCC2 e adiciona à trama
-    unsigned char stuffedBCC2[2];
-    int stuffedBCC2Length = applyByteStuffing(&BCC2, 1, stuffedBCC2);
-    for (int i = 0; i < stuffedBCC2Length; i++) frame[frameIndex++] = stuffedBCC2[i];
+    unsigned char stuffedCRC[2];
+    int stuffedCRCLength = applyByteStuffing(&CRC, 1, stuffedCRC);
+    for (int i = 0; i < stuffedCRCLength; i++) {
+        frame[frameIndex++] = stuffedCRC[i];
+    }
     
     // Finaliza a trama com FLAG
     frame[frameIndex++] = FLAG;
@@ -340,6 +348,7 @@ int llwrite(const unsigned char *buf, int bufSize) {
         printf("DEBUG (llwrite): Trama enviada. Aguardando confirmación...\n");
         alarmEnabled = 0;  // Reinicia el estado de la alarma
         alarm(timeout);    // Configura el temporizador de la alarma
+
         unsigned char byte;
         LinkLayerState state = START;
 
@@ -445,7 +454,7 @@ int llread(unsigned char *packet) {
     unsigned char rawFrame[MAX_FRAME_SIZE];     // Buffer para armazenar a trama recebida
     int rawIndex = 0;                           // Índice para armazenar bytes na trama recebida
     unsigned char byte;                         // Verificação de erro da trama de dados
-    unsigned char BCC2 = 0;
+    unsigned char CRC = 0;
     int attempts = retransmissions;
     clock_t start = clock();                    // Marca o início do tempo de receção
 
@@ -502,13 +511,15 @@ int llread(unsigned char *packet) {
         if (state == STOP_R) {
             int destuffedSize = applyByteDestuffing(rawFrame, rawIndex, packet);
             
-            // Calcula BCC2 para verificar a integridade dos dados
-            BCC2 = 0;
-            for (int i = 0; i < destuffedSize - 1; i++) {
-                BCC2 ^= packet[i];
+            
+            // Calcula el CRC de los datos recibidos (excluyendo el último byte, que es el CRC recibido)
+            CRC = calculateCRC(packet, destuffedSize - 1);
+
+            if (introduceError(0.05)) {  
+                packet[0] ^= 0xFF;  
             }
 
-            if (BCC2 == packet[destuffedSize - 1]) {
+            if (CRC == packet[destuffedSize - 1]) {
                 printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
                 enviarTramaSupervisao(fd, Address_Receiver, Command_RR);        // Envia reconhecimento se BCC2 é correto
                 actualizarEstadisticasRecepcao();
@@ -646,12 +657,20 @@ int llclose(int showStatistics) {
         enviarTramaSupervisao(fd, Address_Receiver, Command_DISC);
         estatisticas.tiempoRecepcion += (double)(clock() - start) / CLOCKS_PER_SEC;
     }
+    estatisticas.tiempoTransferencia = ((double)clock() - estatisticas.tiempoTransferencia) / CLOCKS_PER_SEC;
+    int C = 9600; // Capacidad del enlace en bits por segundo
+    int R = estatisticas.totalBytesTransmitidos * 8; // Total de bits transmitidos
+    double eficiencia = (double)R / (estatisticas.tiempoTransferencia * C);
+
 
     // Exibe as estatísticas se showStatistics estiver ativo
      if (showStatistics) {
         mostrarEstatisticas();
         double tiempoTotalConexion = (double)(clock() - conexionStart) * 1000.0 / CLOCKS_PER_SEC;
         printf("Tempo total da conexao: %.2f ms\n", tiempoTotalConexion);
+        printf("Tiempo total de transferencia: %.2f segundos\n", estatisticas.tiempoTransferencia);
+        printf("Total de bits transmitidos (R): %d bits\n", R);
+        printf("Eficiencia del protocolo (S): %.2f\n", eficiencia);
     }
     // Fecha a porta serial e retorna sucesso
     closeSerialPort();
