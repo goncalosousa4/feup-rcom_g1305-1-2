@@ -111,7 +111,7 @@ void mostrarEstatisticas() {
 }
 
 // Função para calcular o CRC (verificação de redundância cíclica) de um buffer de dados
-unsigned char calculateCRC(const unsigned char *buf, int bufSize) {
+/*unsigned char calculateCRC(const unsigned char *buf, int bufSize) {
     unsigned char crc = 0;
     for (int i = 0; i < bufSize; i++) {
         crc ^= buf[i];
@@ -124,6 +124,15 @@ unsigned char calculateCRC(const unsigned char *buf, int bufSize) {
         }
     }
     return crc;
+}*/
+
+// Función para calcular el BCC2 como un XOR simple de los datos
+unsigned char calculateBCC2(const unsigned char *buf, int bufSize) {
+    unsigned char bcc2 = 0;
+    for (int i = 0; i < bufSize; i++) {
+        bcc2 ^= buf[i];
+    }
+    return bcc2;
 }
 
 // Simula un error en los datos con una probabilidad dada
@@ -313,81 +322,61 @@ int llwrite(const unsigned char *buf, int bufSize) {
     int frameIndex = 0;
     estatisticas.tiempoTransferencia = (double)clock();
     estatisticas.totalBytesTransmitidos += bufSize;
-    
-    // Início da trama com FLAG e endereço de transmissão
+
     frame[frameIndex++] = FLAG;
     frame[frameIndex++] = Address_Transmitter;
-
-    // Define o comando de dados e o campo de verificação BCC1
     frame[frameIndex++] = Command_DATA;
     frame[frameIndex++] = Address_Transmitter ^ Command_DATA;
 
-    
-    // Calcula el CRC de los datos
-    unsigned char CRC = calculateCRC(buf, bufSize);
-    // Aplica byte stuffing ao conteúdo dos dados
+    // Calcula el BCC2 de los datos en lugar del CRC
+    unsigned char BCC2 = calculateBCC2(buf, bufSize);
     frameIndex += applyByteStuffing(buf, bufSize, &frame[frameIndex]);
 
-    // Aplica byte stuffing ao BCC2 e adiciona à trama
-    unsigned char stuffedCRC[2];
-    int stuffedCRCLength = applyByteStuffing(&CRC, 1, stuffedCRC);
-    for (int i = 0; i < stuffedCRCLength; i++) {
-        frame[frameIndex++] = stuffedCRC[i];
+    // Aplica byte stuffing a BCC2 y lo agrega al frame
+    unsigned char stuffedBCC2[2];
+    int stuffedBCC2Length = applyByteStuffing(&BCC2, 1, stuffedBCC2);
+    for (int i = 0; i < stuffedBCC2Length; i++) {
+        frame[frameIndex++] = stuffedBCC2[i];
     }
-    
-    // Finaliza a trama com FLAG
+
     frame[frameIndex++] = FLAG;
+    int attempts = retransmissions;
+    clock_t start = clock();
 
-    int attempts = retransmissions;     // Número de tentativas permitidas para retransmissão
-    clock_t start = clock();            // Inicia temporizador para contabilizar tempo de transmissão
-
-    // Envia a trama e aguarda confirmação (RR)
     while (attempts > 0) {
-        // Envia a trama pela porta serial
         writeBytesSerialPort(frame, frameIndex);
         printf("DEBUG (llwrite): Trama enviada. Aguardando confirmación...\n");
-        alarmEnabled = 0;  // Reinicia el estado de la alarma
-        alarm(timeout);    // Configura el temporizador de la alarma
+        alarmEnabled = 0;
+        alarm(timeout);
 
         unsigned char byte;
         LinkLayerState state = START;
-
-        // Máquina de estados para verificar a confirmação de recebimento (RR)
         while (!alarmEnabled && state != STOP_R) {
             if (readByteSerialPort(&byte) > 0) {
+                // Procesamiento de los bytes recibidos para confirmar recepción (RR)
                 switch (state) {
                     case START:
                         if (byte == FLAG) state = FLAG_RCV;
-                        else state = START;  
                         break;
-                
                     case FLAG_RCV:
                         if (byte == Address_Receiver) state = A_RCV;
-                        else if (byte == FLAG) state = FLAG_RCV;  
-                        else state = START;   
                         break;
-
                     case A_RCV:
                         if (byte == Command_RR) state = STOP_R;
-                        else if (byte == FLAG) state = FLAG_RCV;  
-                        else state = START;  
                         break;
-
                     default:
-                        state = START;  // Garante que, em qualquer caso inesperado, retorna a START
+                        state = START;
                         break;
                 }
             }
         }
 
-        // Se a confirmação de recebimento foi recebida (estado STOP_R)
         if (state == STOP_R) {
             alarm(0);
             estatisticas.tiempoTransmision += (double)(clock() - start) * 1000.0 / CLOCKS_PER_SEC;
             return frameIndex;
         }
 
-        // Caso o alarme seja ativado (tempo esgotado), registrar tempo de desconexão e tentar novamente
         printf("DEBUG (llwrite): Tiempo de espera agotado, reintentando...\n");
         desconexionStart = clock();
         estatisticas.tiempoDesconexion += (double)(clock() - desconexionStart) * 1000.0 / CLOCKS_PER_SEC;
@@ -395,7 +384,6 @@ int llwrite(const unsigned char *buf, int bufSize) {
     }
 
     printf("DEBUG (llwrite): Error, no se pudo enviar la trama correctamente.\n");
-    // Retorna erro se todas as tentativas falharem
     return -1;
 }
 
@@ -450,55 +438,47 @@ int applyByteDestuffing(const unsigned char *input, int length, unsigned char *o
 int llread(unsigned char *packet) {
     printf("DEBUG: Iniciando función llread.\n");
 
-    LinkLayerState state = START;               // Estado inicial da máquina de estados
-    unsigned char rawFrame[MAX_FRAME_SIZE];     // Buffer para armazenar a trama recebida
-    int rawIndex = 0;                           // Índice para armazenar bytes na trama recebida
-    unsigned char byte;                         // Verificação de erro da trama de dados
-    unsigned char CRC = 0;
+    LinkLayerState state = START;
+    unsigned char rawFrame[MAX_FRAME_SIZE];
+    int rawIndex = 0;
+    unsigned char byte;
+    unsigned char BCC2;
     int attempts = retransmissions;
-    clock_t start = clock();                    // Marca o início do tempo de receção
+    clock_t start = clock();
 
-    // Loop para tentativa de recepção com controle de retransmissão
     while (attempts > 0) {
         printf("DEBUG (llread): Aguardando trama de datos...\n");
-        alarmEnabled = 0;  // Reinicia el estado de la alarma
-        alarm(timeout);    // Configura el temporizador de la alarma
+        alarmEnabled = 0;
+        alarm(timeout);
 
-        // Máquina de estados para receber a trama
         while (!alarmEnabled && state != STOP_R) {
             if (readByteSerialPort(&byte) > 0) {
                 printf("DEBUG (llread): Estado = %d, Byte recibido = 0x%X\n", state, byte);
-
                 switch (state) {
                     case START:
                         if (byte == FLAG) state = FLAG_RCV;
                         break;
                     case FLAG_RCV:
                         if (byte == Address_Transmitter) state = A_RCV;
-                        else if (byte != FLAG) state = START;
                         break;
                     case A_RCV:
                         if (byte == Command_DATA) state = C_RCV;
-                        else if (byte == FLAG) state = FLAG_RCV;
-                        else state = START;
                         break;
                     case C_RCV:
                         if (byte == (Address_Transmitter ^ Command_DATA)) state = BCC1_OK;
-                        else if (byte == FLAG) state = FLAG_RCV;
-                        else state = START;
                         break;
                     case BCC1_OK:
                         if (byte != FLAG) {
-                            rawFrame[rawIndex++] = byte;    // Armazena bytes de dado
+                            rawFrame[rawIndex++] = byte;
                             state = DATA;
                         }
                         break;
                     case DATA:
                         if (byte == FLAG) {
                             printf("DEBUG (llread): FLAG final detectado, terminando leitura de trama\n");
-                            state = STOP_R;     // Alcança o estado final ao receber o FLAG final
+                            state = STOP_R;
                         } else {
-                            rawFrame[rawIndex++] = byte;    // Armazena mais bytes de dados
+                            rawFrame[rawIndex++] = byte;
                         }
                         break;
                     default:
@@ -507,32 +487,22 @@ int llread(unsigned char *packet) {
             }
         }
 
-        // Processa a trama após o estado final ser alcançado
         if (state == STOP_R) {
             int destuffedSize = applyByteDestuffing(rawFrame, rawIndex, packet);
-            
-            
-            // Calcula el CRC de los datos recibidos (excluyendo el último byte, que es el CRC recibido)
-            CRC = calculateCRC(packet, destuffedSize - 1);
+            BCC2 = calculateBCC2(packet, destuffedSize - 1);
 
-            /*if (introduceError(0.05)) {  
-                packet[0] ^= 0xFF;  
-            }*/
-
-            if (CRC == packet[destuffedSize - 1]) {
+            if (BCC2 == packet[destuffedSize - 1]) {
                 printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
-                enviarTramaSupervisao(fd, Address_Receiver, Command_RR);        // Envia reconhecimento se BCC2 é correto
+                enviarTramaSupervisao(fd, Address_Receiver, Command_RR);
                 actualizarEstadisticasRecepcao();
                 estatisticas.tiempoRecepcion += (double)(clock() - start) * 1000.0 / CLOCKS_PER_SEC;
-                return destuffedSize - 1;        // Retorna o tamanho dos dados recebidos (sem o BCC2)
-            } 
-            
-            else {
+                return destuffedSize - 1;
+            } else {
                 printf("Erro: BCC2 incorreto. A enviar REJ...\n");
-                enviarTramaSupervisao(fd, Address_Receiver, Command_REJ);       // Envia rejeição se BCC2 é incorreto
+                enviarTramaSupervisao(fd, Address_Receiver, Command_REJ);
                 actualizarEstadisticasEnvio(0);
                 attempts--;
-                state = START;      // Reinicia para o estado inicial
+                state = START;
                 rawIndex = 0;
             }
         } else {
