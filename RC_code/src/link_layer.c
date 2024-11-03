@@ -6,6 +6,9 @@
 #include "serial_port.h"
 #include "link_layer.h"
 
+#define C_RR(r) (0x05 | ((r) << 7))  // RR command with the 'r' parameter as 0 or 1
+#define C_REJ(r) (0x01 | ((r) << 7)) // REJ command with the 'r' parameter as 0 or 1
+
 // Enums para caracteres de controle e comandos de comunicação
 typedef enum {
     FLAG = 0x7E,        //Usado para indicar o início e fim de uma trama
@@ -351,7 +354,13 @@ int llwrite(const unsigned char *buf, int bufSize) {
                         if (byte == Address_Receiver) state = A_RCV;
                         break;
                     case A_RCV:
-                        if (byte == Command_RR) state = STOP_R;
+                        if (byte == C_RR(0) || byte == C_RR(1)) {
+                            state = STOP_R;
+                        } else if (byte == C_REJ(0) || byte == C_REJ(1)) {
+                            // Reset state to resend the frame
+                            state = START;
+                            printf("DEBUG (llwrite): REJ received, resending frame...\n");
+                        }
                         break;
                     default:
                         state = START;
@@ -430,45 +439,75 @@ int llread(unsigned char *packet) {
     int frameIndex = 0;
     unsigned char byte;
     int attempts = retransmissions;
-
+    // Loop principal de tentativas de leitura
     while (attempts > 0) {
         alarmEnabled = 0;
         alarm(timeout);
-
+        // Loop para ler bytes enquanto o alarme não dispara e o estado final não é alcançado
         while (!alarmEnabled && state != STOP_R) {
             if (readByteSerialPort(&byte) > 0) {
                 printf("DEBUG (llread): Estado = %d, Byte recibido = 0x%X\n", state, byte);
                 switch (state) {
-                    case START: if (byte == FLAG) state = FLAG_RCV; break;
-                    case FLAG_RCV: if (byte == Address_Transmitter) state = A_RCV; break;
-                    case A_RCV: if (byte == Command_DATA) state = C_RCV; break;
-                    case C_RCV: if (byte == (Address_Transmitter ^ Command_DATA)) state = BCC1_OK; break;
-                    case BCC1_OK: if (byte != FLAG) { frame[frameIndex++] = byte; state = DATA; } break;
-                    case DATA: if (byte == FLAG) state = STOP_R; else frame[frameIndex++] = byte; break;
-                    default: state = START; break;
+                    case START:
+                        if (byte == FLAG) state = FLAG_RCV;
+                        break;
+                    case FLAG_RCV:
+                        if (byte == Address_Transmitter) state = A_RCV;
+                        break;
+                    case A_RCV:
+                        if (byte == Command_DATA) {
+                            state = C_RCV;
+                        } else if (byte == Command_DISC) {
+                             // Lida com o pedido de desconexão
+                            printf("DEBUG (llread): Command_DISC recibido, desconectando...\n");
+                            // Retorna um valor específico para indicar desconexão
+                            return -2;  
+                        }
+                        break;
+                    case C_RCV:
+                        if (byte == (Address_Transmitter ^ Command_DATA)) state = BCC1_OK;
+                        break;
+                    case BCC1_OK:
+                        if (byte != FLAG) {
+                            frame[frameIndex++] = byte;
+                            state = DATA;
+                        }
+                        break;
+                    case DATA:
+                        if (byte == FLAG) {
+                            state = STOP_R;
+                        } else {
+                            frame[frameIndex++] = byte;
+                        }
+                        break;
+                    default:
+                        state = START;
+                        break;
                 }
             }
         }
-
+        // Processa a trama recebida se o estado final for alcançado
         if (state == STOP_R) {
             int destuffedSize = applyByteDestuffing(frame, frameIndex, packet);
             unsigned char BCC2 = calculateBCC2(packet, destuffedSize - 1);
-
+            // Verifica o BCC2 para garantir a integridade dos dados
             if (BCC2 == packet[destuffedSize - 1]) {
-                 printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
-                enviarTramaSupervisao(fd, Address_Receiver, Command_RR);
+                printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
+                enviarTramaSupervisao(fd, Address_Receiver, C_RR(0));  // Adjust RR value as needed
                 actualizarEstadisticasRecepcao();
                 estatisticas.tramasRecebidas++;  // Incrementa contador de tramas recebidas
                 return destuffedSize - 1;
             } else {
+                // Envia REJ se o BCC2 for incorreto
                 printf("Erro: BCC2 incorreto. A enviar REJ...\n");
-                enviarTramaSupervisao(fd, Address_Receiver, Command_REJ);
+                enviarTramaSupervisao(fd, Address_Receiver, C_REJ(0));  
                 attempts--;
                 state = START;
                 frameIndex = 0;
             }
         } else {
-             printf("DEBUG (llread): Tiempo de espera agotado, reintentando...\n");
+            // Registra o tempo de desconexão caso o tempo se esgote
+            printf("DEBUG (llread): Tiempo de espera agotado, reintentando...\n");
             desconexionStart = clock();
             estatisticas.tiempoDesconexion += (double)(clock() - desconexionStart) * 1000.0 / CLOCKS_PER_SEC;
             attempts--;
