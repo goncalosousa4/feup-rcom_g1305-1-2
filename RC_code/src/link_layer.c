@@ -6,8 +6,10 @@
 #include "serial_port.h"
 #include "link_layer.h"
 
-#define C_RR(r) (0x05 | ((r) << 7))  // RR command with the 'r' parameter as 0 or 1
-#define C_REJ(r) (0x01 | ((r) << 7)) // REJ command with the 'r' parameter as 0 or 1
+#define C_RR0 0xAA   // RR0: el receptor está listo para recibir la trama de información número 0
+#define C_RR1 0xAB   // RR1: el receptor está listo para recibir la trama de información número 1
+#define C_REJ0 0x54  // REJ0: el receptor rechaza la trama de información número 0 (se detectó un error)
+#define C_REJ1 0x55  // REJ1: el receptor rechaza la trama de información número 1 (se detectó un error)
 
 // Enums para caracteres de controle e comandos de comunicação
 typedef enum {
@@ -335,8 +337,8 @@ int llwrite(const unsigned char *buf, int bufSize) {
     frameIndex += applyByteStuffing(&BCC2, 1, &frame[frameIndex]);
     frame[frameIndex++] = FLAG;
 
-    int attempts = retransmissions;
-    while (attempts > 0) {
+    int tentativas = retransmissions;
+    while (tentativas > 0) {
         writeBytesSerialPort(frame, frameIndex);
         alarmEnabled = 0;
         alarm(timeout);
@@ -354,9 +356,9 @@ int llwrite(const unsigned char *buf, int bufSize) {
                         if (byte == Address_Receiver) state = A_RCV;
                         break;
                     case A_RCV:
-                        if (byte == C_RR(0) || byte == C_RR(1)) {
+                        if (byte == C_RR0 || byte == C_RR1) {
                             state = STOP_R;
-                        } else if (byte == C_REJ(0) || byte == C_REJ(1)) {
+                        } else if (byte == C_REJ0 || byte == C_REJ1) {
                             // Reset state to resend the frame
                             state = START;
                             printf("DEBUG (llwrite): REJ received, resending frame...\n");
@@ -375,7 +377,7 @@ int llwrite(const unsigned char *buf, int bufSize) {
             return frameIndex;
         }
 
-        attempts--;
+        tentativas--;
         desconexionStart = clock();
         estatisticas.tiempoDesconexion += (double)(clock() - desconexionStart) * 1000.0 / CLOCKS_PER_SEC;
     }
@@ -438,9 +440,9 @@ int llread(unsigned char *packet) {
     unsigned char frame[MAX_FRAME_SIZE];
     int frameIndex = 0;
     unsigned char byte;
-    int attempts = retransmissions;
+    int tentativas = retransmissions;
     // Loop principal de tentativas de leitura
-    while (attempts > 0) {
+    while (tentativas > 0) {
         alarmEnabled = 0;
         alarm(timeout);
         // Loop para ler bytes enquanto o alarme não dispara e o estado final não é alcançado
@@ -493,15 +495,15 @@ int llread(unsigned char *packet) {
             // Verifica o BCC2 para garantir a integridade dos dados
             if (BCC2 == packet[destuffedSize - 1]) {
                 printf("DEBUG (llread): Trama recebida corretamente. A enviar RR...\n");
-                enviarTramaSupervisao(fd, Address_Receiver, C_RR(0));  // Adjust RR value as needed
+                enviarTramaSupervisao(fd, Address_Receiver, C_RR0);  // Adjust RR value as needed
                 actualizarEstadisticasRecepcao();
                 estatisticas.tramasRecebidas++;  // Incrementa contador de tramas recebidas
                 return destuffedSize - 1;
             } else {
                 // Envia REJ se o BCC2 for incorreto
                 printf("Erro: BCC2 incorreto. A enviar REJ...\n");
-                enviarTramaSupervisao(fd, Address_Receiver, C_REJ(0));  
-                attempts--;
+                enviarTramaSupervisao(fd, Address_Receiver, C_REJ0);  
+                tentativas--;
                 state = START;
                 frameIndex = 0;
             }
@@ -510,7 +512,7 @@ int llread(unsigned char *packet) {
             printf("DEBUG (llread): Tiempo de espera agotado, reintentando...\n");
             desconexionStart = clock();
             estatisticas.tiempoDesconexion += (double)(clock() - desconexionStart) * 1000.0 / CLOCKS_PER_SEC;
-            attempts--;
+            tentativas--;
         }
     }
 
