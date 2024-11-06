@@ -110,13 +110,11 @@ void enviarTramaSupervisao(int fd, unsigned char address, unsigned char control)
 // Atualiza as estatísticas com base no resultado de uma trama enviada
 void actualizarEstadisticasEnvio(int aceito) {
     if (aceito) {
-        estatisticas.tramasAceitas++;
+        estatisticas.tramasAceitas++;       // Incrementa tramas aceitas se a trama foi recebida corretamente
     } else {
-        estatisticas.tramasRejeitadas++;
+        estatisticas.tramasRejeitadas++;    // Incrementa tramas rejeitadas se ocorreu um erro na receção
     }
-    estatisticas.tramasEnviadas++;
 }
-
 
 // Incrementa a contagem de tramas recebidas
 void actualizarEstadisticasRecepcao() {
@@ -579,13 +577,13 @@ int llread(unsigned char *packet) {
             }
         } else if (alarmEnabled) {
             // Control del tiempo de espera, registra y reinicia
-            //printf("DEBUG (llread): Tiempo de espera agotado, reintentando...\n");
+            printf("DEBUG (llread): Tiempo de espera agotado, reintentando...\n");
             desconexionStart = clock();
             estatisticas.tiempoDesconexion += (double)(clock() - desconexionStart) * 1000.0 / CLOCKS_PER_SEC;
             tentativas--;
             state = START;  // Reinicia el estado en caso de timeout
             frameIndex = 0; // Reinicia el índice del frame
-            //printf("DEBUG (llread): Reinicio após timeout, tentativas restantes = %d\n", tentativas);
+            printf("DEBUG (llread): Reinicio após timeout, tentativas restantes = %d\n", tentativas);
         }
     }
 
