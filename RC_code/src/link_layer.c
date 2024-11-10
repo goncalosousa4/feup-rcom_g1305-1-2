@@ -80,7 +80,7 @@ void alarmHandler(int signal) {
 }
 
 // Função para enviar uma trama de supervisão (controlo)
-int enviarTramaSupervisao1(unsigned char address, unsigned char control) {
+/*int enviarTramaSupervisao1(unsigned char address, unsigned char control) {
     unsigned char frame[5] = {0}; // Criação da trama de controlo
     frame[0] = FLAG;
     frame[1] = address;
@@ -98,7 +98,7 @@ int enviarTramaSupervisao1(unsigned char address, unsigned char control) {
     // Wait until all bytes have been written to the serial port
     sleep(1);
     return 0;
-}
+}*/
 
 void enviarTramaSupervisao(int fd, unsigned char address, unsigned char control) {
     unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG}; // Criação da trama de controlo
@@ -161,9 +161,9 @@ unsigned char calculateBCC2(const unsigned char *buf, int bufSize) {
 }
 
 // Simula un error en los datos con una probabilidad dada
-int introduceError(float probability) {
+/*int introduceError(float probability) {
     return ((float)rand() / RAND_MAX) < probability;
-}
+}*/
 
 ////////////////////////////////////////////////
 // LLOPEN - Abre a conexão serial
