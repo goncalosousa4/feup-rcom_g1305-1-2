@@ -37,7 +37,7 @@ unsigned char frame[MAX_FRAME_SIZE];    // Array para armazenar uma trama tempor
 
 extern int fd;
 LinkLayerRole currentRole;  //Transmissor ou receptor
-
+LinkLayer param;
 // Estrutura para armazenar as estatísticas de conexão
 typedef struct {
      int tramasEnviadas;
@@ -358,10 +358,13 @@ int applyByteStuffing(const unsigned char *input, int length, unsigned char *out
 //   0 se a trama for enviada com sucesso e confirmada, -1 em caso de erro
 
 int llwrite(const unsigned char *buf, int bufSize) {
+    if (estatisticas.tiempoTransferencia == 0) {
+        estatisticas.tiempoTransferencia = (double)clock();
+    }
+
     unsigned char frame[MAX_FRAME_SIZE];
     int frameIndex = 0;
-    estatisticas.totalBytesTransmitidos += bufSize;
-
+    
     frame[frameIndex++] = FLAG;
     frame[frameIndex++] = Address_Transmitter;
     frame[frameIndex++] = Command_DATA;
@@ -412,6 +415,8 @@ int llwrite(const unsigned char *buf, int bufSize) {
         if (state == STOP_R && (byte == C_RR0 || byte == C_RR1)) {
             alarm(0);
             actualizarEstadisticasEnvio(1);
+            estatisticas.totalBytesTransmitidos += bufSize;
+
             return frameIndex;  // Confirmación exitosa, avanza al siguiente paquete
         }
 
@@ -675,21 +680,25 @@ int llclose(int showStatistics) {
         enviarTramaSupervisao(fd, Address_Receiver, Command_DISC);
         estatisticas.tiempoRecepcion += (double)(clock() - start) / CLOCKS_PER_SEC;
     }
-
-    // Calcula a eficiência e exibe estatísticas, se solicitado
     estatisticas.tiempoTransferencia = ((double)clock() - estatisticas.tiempoTransferencia) / CLOCKS_PER_SEC;
+
+    
+    
+    // Calcula a eficiência e exibe estatísticas, se solicitado
+    
     int C = 9600; // Capacidade do enlace em bits por segundo
     int R = estatisticas.totalBytesTransmitidos * 8; // Total de bits transmitidos
-    double eficiencia = (double)R / (estatisticas.tiempoTransferencia * C);
+    double eficiencia = ((double)R / (estatisticas.tiempoTransferencia * C)) * 100;
 
     // Exibe as estatísticas se showStatistics estiver ativo
     if (showStatistics) {
         mostrarEstatisticas();
         double tiempoTotalConexion = (double)(clock() - conexionStart) * 1000.0 / CLOCKS_PER_SEC;
+        printf("BaudRate: %d\n", C);
         printf("Tempo total da conexão: %.2f ms\n", tiempoTotalConexion);
         printf("Tempo total de transferência: %.2f segundos\n", estatisticas.tiempoTransferencia);
         printf("Total de bits transmitidos (R): %d bits\n", R);
-        printf("Eficiência do protocolo (S): %.2f\n", eficiencia);
+        printf("Eficiência do protocolo (S): %.2f%%\n", eficiencia);
     }
      // Fecha a porta serial e retorna sucesso
     closeSerialPort();
