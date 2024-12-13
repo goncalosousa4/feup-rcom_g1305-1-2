@@ -173,6 +173,16 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
     return 0;
 }
 
+int extract_ip_port(const char *start, int *h1, int *h2, int *h3, int *h4, int *p1, int *p2) {
+    return sscanf(start, "(%d,%d,%d,%d,%d,%d)", h1, h2, h3, h4, p1, p2);
+}
+
+void construct_ip_and_port(char *data_ip, size_t buffer_size, int h1, int h2, int h3, int h4, int p1, int p2, int *data_port) {
+    // Construir dirección IP
+    snprintf(data_ip, buffer_size, "%d.%d.%d.%d", h1, h2, h3, h4);
+    // Calcular el puerto
+    *data_port = (p1 << 8) + p2;
+}
 
 int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     char response[BUFFER_SIZE];
@@ -204,16 +214,15 @@ int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
         return -1;
     }
 
-    // Extraer valores IP y puerto de la respuesta
-    if (sscanf(start, "(%d,%d,%d,%d,%d,%d)", &h1, &h2, &h3, &h4, &p1, &p2) != 6) {
+    // Llamar a la función auxiliar para extraer IP y puerto
+    if (extract_ip_port(start, &h1, &h2, &h3, &h4, &p1, &p2) != 6) {
         fprintf(stderr, "Error al analizar la respuesta PASV\n");
         fprintf(stderr, "Respuesta recibida: %s\n", response);
         return -1;
     }
 
-    // Construir la dirección IP y calcular el puerto
-    snprintf(data_ip, BUFFER_SIZE, "%d.%d.%d.%d", h1, h2, h3, h4);
-    *data_port = (p1 << 8) + p2;
+    // Usar función para construir IP y calcular puerto
+    construct_ip_and_port(data_ip, BUFFER_SIZE, h1, h2, h3, h4, p1, p2, data_port);
 
     printf("Modo pasivo - IP: %s, Puerto: %d\n", data_ip, *data_port);
     return 0;
