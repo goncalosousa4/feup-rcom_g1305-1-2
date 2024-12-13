@@ -10,6 +10,14 @@
 #define SERVER_PORT 6000
 #define BUFFER_SIZE 1024
 
+typedef enum {
+    INIT,
+    READING,
+    VALIDATING,
+    DONE
+} ProcessState;
+
+
 // FTP Utility Functions
 int get_ip_from_hostname(const char *hostname, char *ip_buffer, size_t buffer_size) {
     struct hostent *h;
@@ -88,12 +96,6 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
     return 0;
 }
 
-typedef enum {
-    INIT,
-    READING,
-    VALIDATING,
-    DONE
-} ProcessState;
 
 int validate_response_code(char resp_code) {
     return (resp_code >= '1' && resp_code <= '3');
