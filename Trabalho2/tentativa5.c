@@ -392,9 +392,8 @@ int main(int argc, char *argv[]) {
     printf("Resolved IP: %s\n", ip_address);
 
     // Conectar al servidor FTP
-    control_socket = connect_to_server(ip_address, 21);
+    control_socket = send_message(ip_address, 21, ""); // Usar send_message para establecer la conexión
     if (control_socket < 0) {
-        if (control_socket >= 0) close(control_socket);
         return 1;
     }
 
@@ -410,10 +409,9 @@ int main(int argc, char *argv[]) {
     }
 
     // Conectar al socket de datos
-    data_socket = connect_to_server(passive_ip, data_port);
+    data_socket = send_message(passive_ip, data_port, ""); // Usar send_message para el socket de datos
     if (data_socket < 0) {
         if (control_socket >= 0) close(control_socket);
-        if (data_socket >= 0) close(data_socket);
         return 1;
     }
 
@@ -434,4 +432,3 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
-
