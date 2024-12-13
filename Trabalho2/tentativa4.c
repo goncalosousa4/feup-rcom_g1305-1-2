@@ -26,8 +26,13 @@ int get_ip_from_hostname(const char *hostname, char *ip_buffer, size_t buffer_si
 }
 
 const char *get_filename(const char *path) {
-    const char *filename = strrchr(path, '/');
-    return (filename != NULL) ? filename + 1 : path;
+    const char *filename = path;
+    for (const char *current = path; *current != '\0'; current++) {
+        if (*current == '/') {
+            filename = current + 1;  // Actualizamos el puntero después del último '/'
+        }
+    }
+    return filename;
 }
 
 int parse_url(const char *url, char *user, char *password, char *host, char *path) {
