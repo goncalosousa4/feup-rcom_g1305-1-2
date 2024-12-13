@@ -58,7 +58,7 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
             strcpy(password, colon + 1);
         } else {
             strcpy(user, credentials);
-            strcpy(password, "anonymous");
+            strcpy(password, "rcom");
         }
 
         // Extraer host
@@ -72,16 +72,16 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
         // Extraer host
         strncpy(host, current, slash - current);
         host[slash - current] = '\0';
-        strcpy(user, "anonymous");
-        strcpy(password, "anonymous");
+        strcpy(user, "rcom");
+        strcpy(password, "rcom");
 
         // Extraer path
         strcpy(path, slash + 1);
     } else {
         // Caso sin path
         strcpy(host, current);
-        strcpy(user, "anonymous");
-        strcpy(password, "anonymous");
+        strcpy(user, "rcom");
+        strcpy(password, "rcom");
         path[0] = '\0';
     }
 
