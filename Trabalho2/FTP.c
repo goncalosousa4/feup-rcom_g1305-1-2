@@ -149,9 +149,9 @@ int main(int argc, char *argv[]) {
     readResponse(controlSockfd);
 
     // Enviar as credenciais de utilizador e palavra-passe
-    sendCommand(controlSockfd, "USER", "rcom");
+    sendCommand(controlSockfd, "USER", "anonymous");
     readResponse(controlSockfd);
-    sendCommand(controlSockfd, "PASS", "rcom");
+    sendCommand(controlSockfd, "PASS", "anonymous");
     readResponse(controlSockfd);
 
     // Ativar o modo passivo
