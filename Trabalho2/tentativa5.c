@@ -88,6 +88,10 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
     return 0;
 }
 
+int is_valid_response_code(char cod_resp) {
+    return (cod_resp >= '1' && cod_resp <= '3');
+}
+
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
     char buffer[BUFFER_SIZE];
     ssize_t bytes_read;
@@ -101,6 +105,8 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
         perror("Error al enviar el comando");
         return -1;
     }
+
+    printf("Comando enviado al servidor: %s\n", command);
 
     // Inicializar el buffer de respuesta
     memset(response, 0, response_size);
@@ -116,28 +122,33 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
 
         // Finalizar la cadena de la respuesta
         response[bytes_read] = '\0';
-        printf("Respuesta del servidor: %s", response);
+        printf("Respuesta del servidor recibida (%ld bytes): %s", bytes_read, response);
 
         // Verificar los códigos de respuesta de manera diferente
         cod_resp = response[0];
         if (cod_resp >= '1' && cod_resp <= '3') {
+            printf("Código de respuesta válido detectado: %c\n", cod_resp);
+
             // Usar un indicador genérico en lugar de "PASV"
             if (!strstr(command, "MODO_PASIVO")) {
+                printf("Comando no requiere modo pasivo. Finalizando lectura.\n");
                 break; // Finalizar si no es "MODO_PASIVO"
             }
             if (strstr(command, "MODO_PASIVO") && strstr(response, "(") != NULL) {
+                printf("Modo pasivo detectado con respuesta válida. Finalizando lectura.\n");
                 break; // Finalizar si es "MODO_PASIVO" con formato correcto
             }
+        } else {
+            printf("Código de respuesta no válido: %c\n", cod_resp);
         }
 
         // Respuesta intermedia
         printf("Respuesta intermedia: %s", response);
     }
 
+    printf("Lectura de respuesta completada.\n");
     return 0;
 }
-
-
 
 
 int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
