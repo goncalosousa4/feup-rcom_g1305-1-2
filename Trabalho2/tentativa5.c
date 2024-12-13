@@ -88,64 +88,56 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
     return 0;
 }
 
-// FTP Command Handling
+
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
-    // Crear el comando manualmente
-    size_t command_len = strlen(command);
+    // Preparar y enviar el comando al servidor
     char buffer[BUFFER_SIZE];
-    if (command_len + 2 >= BUFFER_SIZE) {  // Verificar límite
-        fprintf(stderr, "Command too long\n");
-        return -1;
-    }
+    snprintf(buffer, BUFFER_SIZE, "%s\r\n", command);
 
-    strcpy(buffer, command);        // Copiar el comando
-    strcat(buffer, "\r\n");         // Agregar terminador CRLF
-
-    // Enviar el comando al servidor
     if (write(sockfd, buffer, strlen(buffer)) < 0) {
         perror("Error sending command");
         return -1;
     }
 
-    // Limpiar la respuesta
+    // Limpiar la respuesta antes de usarla
     memset(response, 0, response_size);
 
-    // Leer la respuesta del servidor en partes
-    ssize_t total_bytes_read = 0;
+    // Leer la respuesta en bloques y verificar su completitud
+    ssize_t bytes_read;
+    size_t total_bytes_read = 0;
     char temp_buffer[BUFFER_SIZE];
-    while (1) {
-        ssize_t bytes_read = read(sockfd, temp_buffer, sizeof(temp_buffer) - 1);
-        if (bytes_read <= 0) {
-            perror("Error reading response");
-            return -1;
-        }
-
-        // Terminar el buffer temporal y concatenarlo en la respuesta
-        temp_buffer[bytes_read] = '\0';
-        if (total_bytes_read + bytes_read >= (ssize_t)response_size) {
+    while ((bytes_read = read(sockfd, temp_buffer, BUFFER_SIZE - 1)) > 0) {
+        // Asegurar que la respuesta no exceda el tamaño permitido
+        if (total_bytes_read + bytes_read >= response_size) {
             fprintf(stderr, "Response too large\n");
             return -1;
         }
 
-        strcat(response, temp_buffer);
+        // Terminar el buffer temporal y agregarlo a la respuesta
+        temp_buffer[bytes_read] = '\0';
+        strncat(response, temp_buffer, bytes_read);
         total_bytes_read += bytes_read;
 
-        printf("Partial Server Response: %s", temp_buffer);
-
-        // Determinar si la respuesta está completa
+        // Verificar el código inicial de respuesta
         if (response[0] == '1' || response[0] == '2' || response[0] == '3') {
-            if (strstr(command, "PASV") == NULL) {
-                break;
-            }
-            if (strstr(command, "PASV") != NULL && strstr(response, "(") != NULL) {
-                break;
+            // Comprobación específica para el comando "PASV"
+            if (strstr(command, "PASV") && strstr(response, "(")) {
+                break; // Salir si es PASV y la respuesta está completa
+            } else if (!strstr(command, "PASV")) {
+                break; // Salir si no es PASV
             }
         }
     }
 
-    printf("Final Server Response: %s\n", response);
+    if (bytes_read < 0) {
+        perror("Error reading response");
+        return -1;
+    }
+
+    printf("Server Response: %s\n", response);
     return 0;
 }
+
 
 int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     char response[BUFFER_SIZE];
