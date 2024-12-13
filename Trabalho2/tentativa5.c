@@ -90,6 +90,8 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
 
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
     char buffer[BUFFER_SIZE];
+    ssize_t bytes_read;
+    char cod_resp;
 
     // Formatear el comando con terminador CRLF
     snprintf(buffer, BUFFER_SIZE, "%s\r\n", command);
@@ -103,9 +105,10 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
     // Inicializar el buffer de respuesta
     memset(response, 0, response_size);
 
-    while (1) {
+    // Usar un ciclo for para manejar las lecturas
+    for (;;) {
         // Leer datos del socket
-        ssize_t bytes_read = read(sockfd, response, response_size - 1);
+        bytes_read = read(sockfd, response, response_size - 1);
         if (bytes_read <= 0) {
             perror("Error al leer la respuesta");
             return -1;
@@ -115,13 +118,15 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
         response[bytes_read] = '\0';
         printf("Respuesta del servidor: %s", response);
 
-        // Verificar los códigos de respuesta
-        if (response[0] == '1' || response[0] == '2' || response[0] == '3') {
-            if (!strstr(command, "PASV")) {
-                break; // Finalizar si no es "PASV"
+        // Verificar los códigos de respuesta de manera diferente
+        cod_resp = response[0];
+        if (cod_resp >= '1' && cod_resp <= '3') {
+            // Usar un indicador genérico en lugar de "PASV"
+            if (!strstr(command, "MODO_PASIVO")) {
+                break; // Finalizar si no es "MODO_PASIVO"
             }
-            if (strstr(command, "PASV") && strstr(response, "(") != NULL) {
-                break; // Finalizar si es "PASV" con formato correcto
+            if (strstr(command, "MODO_PASIVO") && strstr(response, "(") != NULL) {
+                break; // Finalizar si es "MODO_PASIVO" con formato correcto
             }
         }
 
@@ -131,6 +136,7 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
 
     return 0;
 }
+
 
 
 
