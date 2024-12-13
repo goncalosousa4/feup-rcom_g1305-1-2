@@ -92,46 +92,37 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
     char buffer[BUFFER_SIZE];
 
-    // Construir el comando con terminador CRLF
     snprintf(buffer, BUFFER_SIZE, "%s\r\n", command);
-
-    // Enviar el comando al servidor
     if (write(sockfd, buffer, strlen(buffer)) < 0) {
         perror("Error sending command");
         return -1;
     }
 
-    // Limpiar el buffer de respuesta
     memset(response, 0, response_size);
-
     while (1) {
-        // Leer la respuesta en bloques
-        char temp_response[BUFFER_SIZE];
-        ssize_t bytes_read = read(sockfd, temp_response, sizeof(temp_response) - 1);
+        ssize_t bytes_read = read(sockfd, response, response_size - 1);
         if (bytes_read <= 0) {
             perror("Error reading response");
             return -1;
         }
 
-        temp_response[bytes_read] = '\0';  // Terminar la respuesta temporal
-        strncat(response, temp_response, response_size - strlen(response) - 1);  // Añadir al buffer de respuesta
+        response[bytes_read] = '\0';
+        printf("Server Response: %s", response);
 
-        printf("Partial Server Response: %s", temp_response);
-
-        // Verificar si la respuesta completa fue recibida
         if (response[0] == '1' || response[0] == '2' || response[0] == '3') {
-            if (strstr(command, "PASV") && strstr(response, "(")) {
-                break;  // Salir si es PASV y la respuesta tiene el formato esperado
-            } else if (!strstr(command, "PASV")) {
-                break;  // Salir si no es PASV
+            if (strstr(command, "PASV") == NULL) {
+                break;
+            }
+            if (strstr(command, "PASV") != NULL && strstr(response, "(") != NULL) {
+                break;
             }
         }
+
+        printf("Intermediate Response: %s", response);
     }
 
-    printf("Final Server Response: %s\n", response);
     return 0;
 }
-
 
 int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     char response[BUFFER_SIZE];

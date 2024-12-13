@@ -88,55 +88,50 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
     return 0;
 }
 
-
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
-    // Preparar y enviar el comando al servidor
     char buffer[BUFFER_SIZE];
+
+    // Formatear el comando con terminador CRLF
     snprintf(buffer, BUFFER_SIZE, "%s\r\n", command);
 
+    // Enviar el comando al servidor
     if (write(sockfd, buffer, strlen(buffer)) < 0) {
-        perror("Error sending command");
+        perror("Error al enviar el comando");
         return -1;
     }
 
-    // Limpiar la respuesta antes de usarla
+    // Inicializar el buffer de respuesta
     memset(response, 0, response_size);
 
-    // Leer la respuesta en bloques y verificar su completitud
-    ssize_t bytes_read;
-    size_t total_bytes_read = 0;
-    char temp_buffer[BUFFER_SIZE];
-    while ((bytes_read = read(sockfd, temp_buffer, BUFFER_SIZE - 1)) > 0) {
-        // Asegurar que la respuesta no exceda el tamaño permitido
-        if (total_bytes_read + bytes_read >= response_size) {
-            fprintf(stderr, "Response too large\n");
+    while (1) {
+        // Leer datos del socket
+        ssize_t bytes_read = read(sockfd, response, response_size - 1);
+        if (bytes_read <= 0) {
+            perror("Error al leer la respuesta");
             return -1;
         }
 
-        // Terminar el buffer temporal y agregarlo a la respuesta
-        temp_buffer[bytes_read] = '\0';
-        strncat(response, temp_buffer, bytes_read);
-        total_bytes_read += bytes_read;
+        // Finalizar la cadena de la respuesta
+        response[bytes_read] = '\0';
+        printf("Respuesta del servidor: %s", response);
 
-        // Verificar el código inicial de respuesta
+        // Verificar los códigos de respuesta
         if (response[0] == '1' || response[0] == '2' || response[0] == '3') {
-            // Comprobación específica para el comando "PASV"
-            if (strstr(command, "PASV") && strstr(response, "(")) {
-                break; // Salir si es PASV y la respuesta está completa
-            } else if (!strstr(command, "PASV")) {
-                break; // Salir si no es PASV
+            if (!strstr(command, "PASV")) {
+                break; // Finalizar si no es "PASV"
+            }
+            if (strstr(command, "PASV") && strstr(response, "(") != NULL) {
+                break; // Finalizar si es "PASV" con formato correcto
             }
         }
+
+        // Respuesta intermedia
+        printf("Respuesta intermedia: %s", response);
     }
 
-    if (bytes_read < 0) {
-        perror("Error reading response");
-        return -1;
-    }
-
-    printf("Server Response: %s\n", response);
     return 0;
 }
+
 
 
 int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
