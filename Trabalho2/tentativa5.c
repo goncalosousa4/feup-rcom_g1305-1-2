@@ -321,84 +321,117 @@ int send_message(const char *server_ip, int server_port, const char *message) {
     return 0;
 }
 
-// Main Function
+int handle_ftp_auth(int control_socket, const char *user, const char *password) {
+    char response[BUFFER_SIZE] = {0};
+    char command[BUFFER_SIZE] = {0};
+
+    // Comando USER
+    snprintf(command, BUFFER_SIZE, "USER %s", user);
+    if (ftp_command(control_socket, command, response, BUFFER_SIZE) < 0) {
+        fprintf(stderr, "Failed to send USER command\n");
+        return -1;
+    }
+
+    // Comando PASS
+    snprintf(command, BUFFER_SIZE, "PASS %s", password);
+    if (ftp_command(control_socket, command, response, BUFFER_SIZE) < 0) {
+        fprintf(stderr, "Failed to send PASS command\n");
+        return -1;
+    }
+
+    printf("Authentication successful\n");
+    return 0;
+}
+
+int handle_file_transfer(int control_socket, int data_socket, const char *path) {
+    char response[BUFFER_SIZE] = {0};
+    char command[BUFFER_SIZE] = {0};
+
+    // Enviar comando RETR
+    snprintf(command, BUFFER_SIZE, "RETR %s", path);
+    if (ftp_command(control_socket, command, response, BUFFER_SIZE) < 0) {
+        fprintf(stderr, "Failed to send RETR command\n");
+        return -1;
+    }
+
+    // Descargar archivo
+    if (download_file(data_socket, path) < 0) {
+        fprintf(stderr, "Failed to download file\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
+    const char *url = NULL;
+    char user[100] = "", password[100] = "", host[100] = {0}, path[200] = {0}, ip_address[100] = {0};
+    int control_socket = -1;
+    int data_socket = -1;
+    int data_port = 0;
+
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <ftp-url>\n", argv[0]);
         return 1;
     }
 
-    const char *url = argv[1];
-    char user[100] = "", password[100] = "", host[100], path[200], ip[100];
-    int control_sockfd = -1, data_sockfd = -1, data_port;
+    url = argv[1];
 
+    // Parsear URL y extraer detalles
     if (parse_url(url, user, password, host, path) < 0) {
         fprintf(stderr, "Invalid FTP URL\n");
         return 1;
     }
-
     printf("User: %s, Password: %s, Host: %s, Path: %s\n", user, password, host, path);
 
-    if (get_ip_from_hostname(host, ip, sizeof(ip)) < 0) {
+    // Resolver hostname a IP
+    if (get_ip_from_hostname(host, ip_address, sizeof(ip_address)) < 0) {
         fprintf(stderr, "Failed to resolve hostname: %s\n", host);
         return 1;
     }
-    printf("Resolved IP: %s\n", ip);
+    printf("Resolved IP: %s\n", ip_address);
 
-    if ((control_sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket()");
+    // Conectar al servidor FTP
+    control_socket = connect_to_server(ip_address, 21);
+    if (control_socket < 0) {
+        if (control_socket >= 0) close(control_socket);
         return 1;
     }
 
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(21);
-    inet_pton(AF_INET, ip, &server_addr.sin_addr);
-
-    if (connect(control_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("connect()");
-        close(control_sockfd);
+    if (handle_ftp_auth(control_socket, user, password) < 0) {
+        if (control_socket >= 0) close(control_socket);
         return 1;
     }
 
-    char response[BUFFER_SIZE];
-    read(control_sockfd, response, BUFFER_SIZE);
-    printf("Connected to FTP server: %s\n", response);
-
-    char command[BUFFER_SIZE];
-    snprintf(command, BUFFER_SIZE, "USER %s", user);
-    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto cleanup;
-
-    snprintf(command, BUFFER_SIZE, "PASS %s", password);
-    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto cleanup;
-
-    char data_ip[100];
-    if (setup_passive_mode(control_sockfd, data_ip, &data_port) < 0) goto cleanup;
-
-    if ((data_sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket()");
-        goto cleanup;
+    char passive_ip[100] = {0};
+    if (setup_passive_mode(control_socket, passive_ip, &data_port) < 0) {
+        if (control_socket >= 0) close(control_socket);
+        return 1;
     }
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(data_port);
-    inet_pton(AF_INET, data_ip, &server_addr.sin_addr);
-
-    if (connect(data_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("connect()");
-        goto cleanup;
+    // Conectar al socket de datos
+    data_socket = connect_to_server(passive_ip, data_port);
+    if (data_socket < 0) {
+        if (control_socket >= 0) close(control_socket);
+        if (data_socket >= 0) close(data_socket);
+        return 1;
     }
 
-    snprintf(command, BUFFER_SIZE, "RETR %s", path);
-    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto cleanup;
+    if (handle_file_transfer(control_socket, data_socket, path) < 0) {
+        if (control_socket >= 0) close(control_socket);
+        if (data_socket >= 0) close(data_socket);
+        return 1;
+    }
 
-    if (download_file(data_sockfd, path) < 0) goto cleanup;
-
-cleanup:
-    if (data_sockfd >= 0) close(data_sockfd);
-    if (control_sockfd >= 0) close(control_sockfd);
+    if (data_socket >= 0) {
+        close(data_socket);
+        printf("Data socket closed successfully\n");
+    }
+    if (control_socket >= 0) {
+        close(control_socket);
+        printf("Control socket closed successfully\n");
+    }
 
     return 0;
 }
+
