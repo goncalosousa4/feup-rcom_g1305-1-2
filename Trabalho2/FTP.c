@@ -1,177 +1,238 @@
-/**      (C)2000-2021 FEUP
- *       tidy up some includes and parameters
- * */
-
 #include <stdio.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <stdlib.h>
-#include <unistd.h>
-
-#include <string.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include<arpa/inet.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <string.h>
 
-// Porta FTP padrão
-#define FTP_PORT 21
-// Tamanho do buffer para as comunicações
-#define BUFFER_SIZE 1024
+int main(int argc, char **argv) {
 
-/**
- * Envia um comando para o servidor FTP.
- * @param sockfd Descritor do socket para a conexão de controlo.
- * @param command Comando FTP (por exemplo, "USER", "PASS").
- * @param args Argumentos do comando (por exemplo, nome de utilizador ou palavra-passe).
- */
-void sendCommand(int sockfd, const char *command, const char *args) {
-    char buffer[BUFFER_SIZE];
-    snprintf(buffer, sizeof(buffer), "%s %s\r\n", command, args);
-    write(sockfd, buffer, strlen(buffer)); // Enviar comando para o servidor
-    printf(">> %s", buffer); // Mostrar o comando enviado no ecrã
-}
+    struct hostent *h;
+    /* The struct hostent (host entry) with its terms documented
 
-/**
- * Lê e exibe a resposta do servidor FTP.
- * @param sockfd Descritor do socket para a conexão de controlo.
- */
-void readResponse(int sockfd) {
-    char buffer[BUFFER_SIZE];
-    int bytesRead = read(sockfd, buffer, sizeof(buffer) - 1); // Ler dados do servidor
-    if (bytesRead <= 0) {
-        perror("Erro ao ler resposta do servidor");
-        exit(EXIT_FAILURE);
-    }
-    buffer[bytesRead] = '\0'; // Terminar a string com '\0'
-    printf("<< %s", buffer); // Mostrar a resposta do servidor no ecrã
-}
+    struct hostent {
+        char *h_name;    // Official name of the host.
+        char **h_aliases;    // A NULL-terminated array of alternate names for the host.
+        int h_addrtype;    // The type of address being returned; usually AF_INET.
+        int h_length;    // The length of the address in bytes.
+        char **h_addr_list;    // A zero-terminated array of network addresses for the host.
+        // Host addresses are in Network Byte Order.
+    };*/
 
-/**
- * Estabelece uma conexão TCP com o servidor.
- * @param host Endereço ou nome do host para conectar.
- * @return Descritor do socket para a conexão estabelecida.
- */
-int connectToServer(const char *host) {
-    // Resolver o nome do host para um endereço IP
-    struct hostent *server = gethostbyname(host);
-    if (server == NULL) {
-        fprintf(stderr, "Erro: não foi possível converter o nome do host '%s' para um endereço IP\n", host);
-        exit(EXIT_FAILURE);
-    }
+    char buffer[512], user[50], password[50], host[100], url_path[512];
 
-    // Criar um socket
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        perror("Erro ao criar o socket");
-        exit(EXIT_FAILURE);
-    }
-
-    // Configurar o endereço do servidor
-    struct sockaddr_in serverAddr;
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET; //AF_INET é uma constante que indica que o socket vai usar o protocolo IPv4(Internet Protocol version 4)
-    serverAddr.sin_port = htons(FTP_PORT); // Porta em ordem de bytes de rede
-    memcpy(&serverAddr.sin_addr.s_addr, server->h_addr, server->h_length); // Copiar o IP do host
-
-    // Tentar conectar ao servidor
-    if (connect(sockfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0) {
-        perror("Erro ao conectar ao servidor");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Conectado a %s:%d\n", host, FTP_PORT);
-    return sockfd;
-}
-
-/**
- * Ativa o modo passivo no servidor FTP.
- * @param sockfd Descritor do socket de controlo.
- * @param ip Endereço IP obtido no modo passivo.
- * @param port Porta obtida no modo passivo.
- */
-void enterPassiveMode(int sockfd, char *ip, int *port) {
-    // Enviar o comando PASV para o servidor
-    sendCommand(sockfd, "PASV", "");
-    char buffer[BUFFER_SIZE];
-    readResponse(sockfd);
-
-    // Analisar a resposta para obter IP e porta
-    int ip1, ip2, ip3, ip4, p1, p2;
-    sscanf(buffer, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)", &ip1, &ip2, &ip3, &ip4, &p1, &p2);
-    snprintf(ip, BUFFER_SIZE, "%d.%d.%d.%d", ip1, ip2, ip3, ip4); // Construir o endereço IP
-    *port = p1 * 256 + p2; // Calcular a porta a partir dos valores de p1 e p2
-    printf("Modo passivo: IP %s, Porta %d\n", ip, *port);
-}
-
-/**
- * Faz o download de um ficheiro do servidor FTP.
- * @param dataSockfd Descritor do socket de dados.
- * @param filename Nome do ficheiro a ser guardado localmente.
- */
-void downloadFile(int dataSockfd, const char *filename) {
-    FILE *file = fopen(filename, "wb"); // Criar um ficheiro para guardar os dados
-    if (file == NULL) {
-        perror("Erro ao criar o ficheiro local");
-        exit(EXIT_FAILURE);
-    }
-
-    char buffer[BUFFER_SIZE];
-    int bytesRead;
-    // Ler dados do socket de dados e escrever no ficheiro
-    while ((bytesRead = read(dataSockfd, buffer, sizeof(buffer))) > 0) {
-        fwrite(buffer, 1, bytesRead, file);
-    }
-
-    printf("Ficheiro %s descarregado com sucesso.\n", filename);
-    fclose(file); // Fechar o ficheiro local
-}
-
-/**
- * Função principal do cliente FTP.
- * @param argc Número de argumentos.
- * @param argv Argumentos (deve incluir o URL FTP).
- * @return Código de saída.
- */
-int main(int argc, char *argv[]) {
     if (argc != 2) {
-        fprintf(stderr, "Uso: %s <ftp://host/file>\n", argv[0]);
-        return EXIT_FAILURE;
+        fprintf(stderr, "Usage: %s should be as follows: ftp://[<user>:<password>@]<host>/<url-path>\n", argv[0]);
+        exit(-1);
     }
 
-    // Extrair o host e o caminho do ficheiro do URL fornecido
-    char host[BUFFER_SIZE], path[BUFFER_SIZE];
-    sscanf(argv[1], "ftp://%[^/]/%s", host, path);
+    sscanf(argv[1], "ftp://%511s", buffer);
 
-    // Conectar ao servidor de controlo
-    int controlSockfd = connectToServer(host);
+    // parsing the URL to retrieve the information for the host, user and password
+    {   // In this case, we have a user and password
+        size_t distance = 0, length_buffer = strlen(buffer);
+        distance = strcspn(buffer, ":");
 
-    // Ler a resposta inicial do servidor FTP
-    readResponse(controlSockfd);
+        if(distance < length_buffer){
+            size_t distance2 = strcspn(buffer, "@");
 
-    // Enviar as credenciais de utilizador e palavra-passe
-    sendCommand(controlSockfd, "USER", "anonymous");
-    readResponse(controlSockfd);
-    sendCommand(controlSockfd, "PASS", "anonymous");
-    readResponse(controlSockfd);
+            if(distance2 == length_buffer){
+                fprintf(stderr, "Usage: %s ftp://[<user>:<password>@]<host>/<url-path>\n", argv[0]);
+                exit(-1);
+            }
 
-    // Ativar o modo passivo
-    char ip[BUFFER_SIZE];
-    int port;
-    enterPassiveMode(controlSockfd, ip, &port);
+            strncpy(user, buffer, distance);
+            user[distance] = '\0';
+            strncpy(password, buffer + distance + 1, distance2 - distance - 1);
+            password[distance2-distance-1] = '\0';
+            distance = strcspn(buffer + distance2 + 1, "/");
+            strncpy(host, buffer + distance2 + 1, distance);
+            host[distance] = '\0';
+            strcpy(url_path, buffer + distance2 + distance + 1);
+        } else
+        {   // In this case, we have not
+            distance = strcspn(buffer, "/");
+            strncpy(host, buffer, distance);
+            host[distance] = '\0';
+            strcpy(url_path, buffer + distance + 1);
+            sprintf(user,"anonymous");
+            sprintf(password,"password");
+        }
+    }
 
-    // Conectar ao servidor de dados
-    int dataSockfd = connectToServer(ip);
-    sendCommand(controlSockfd, "RETR", path); // Solicitar o ficheiro ao servidor
-    readResponse(controlSockfd);
+    printf("user:%s password:%s host:%s path:%s|\n", user, password, host, url_path);
+    //ftp://rcom:rcom@netlab1.fe.up.pt
 
-    // Fazer o download do ficheiro
-    downloadFile(dataSockfd, path);
+    // If we don´t have a host name then we get an error
+    if ((h = gethostbyname(host)) == NULL) {
+        herror("Error on gethostbyname()");
+        printf("%s\n",host);
+        exit(-1);
+    }
 
-    // Fechar as conexões
-    close(dataSockfd);
-    sendCommand(controlSockfd, "QUIT", "");
-    readResponse(controlSockfd);
-    close(controlSockfd);
+    //Getting the ip address
+    // Address, for backward compatibility.
+    printf("Host name  : %s\n", h->h_name);
+    printf("IP Address : %s\n", inet_ntoa(*((struct in_addr *) h->h_addr_list[0])));
 
-    return EXIT_SUCCESS;
+    int sockfd_control;
+    struct sockaddr_in server_address;
+    char buffer2[520];
+    size_t bytes;
+
+    // Server address handling
+    bzero((char *) &server_address, sizeof(server_address));
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = inet_addr(inet_ntoa(*((struct in_addr *) h->h_addr_list[0])));    //32 bit Internet address network byte ordered
+    server_address.sin_port = htons(21);        // Server TCP port must be network byte ordered 
+
+    // Opening a TCP socket
+    if ((sockfd_control = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Error on socket()");
+        exit(-1);
+    }
+    // Connecting to the server (establishing control channel)
+    if (connect(sockfd_control,
+                (struct sockaddr *) &server_address,
+                sizeof(server_address)) < 0) {
+                    printf("%s\n",h->h_addr_list[0]);
+        perror("Error on connect()");
+        exit(-1);
+    }
+
+    // Sending string to the server
+    usleep(100000);
+    int bytes_read = read(sockfd_control, buffer, 512);
+    buffer[bytes_read] = '\0';
+    printf("%s\n", buffer);
+    if(0 != strncmp(buffer,"220",3)){
+        printf("Error: Unexpected reply from connection.\n");
+        exit(-1);
+    }
+    
+    // Sending the user 
+    sprintf(buffer2, "user %s\r\n", user);
+    bytes = write(sockfd_control, buffer2, strlen(buffer2));
+
+    if (bytes > 0)
+        printf("Bytes written %ld\n", bytes);
+    else {
+        perror("Error on write()");
+        exit(-1);
+    }
+    
+    // Reading the response to specify the password
+    bytes_read = read(sockfd_control, buffer, 512);
+    buffer[bytes_read] = '\0';
+    printf("%s\n", buffer);
+    if(0 != strncmp(buffer,"331 Please specify the password.",32)){
+        printf("Error: Unexpected reply from connection.\n");
+        exit(-1);
+    }
+    
+    // Sending any password and reading the response of successful login
+    sprintf(buffer2, "pass %s\r\n", password);
+    write(sockfd_control, buffer2, strlen(buffer2));
+    bytes_read = read(sockfd_control, buffer, 512);
+    buffer[bytes_read] = '\0';
+    printf("%s", buffer);
+    if(0 != strncmp(buffer,"230",3)){
+        printf("Error: Login failed.\n");
+        exit(-1);
+    }
+    
+    // Sending pasv to enter passive mode and reading the response of entering said mode
+    sprintf(buffer2, "pasv\r\n");
+    write(sockfd_control, buffer2, strlen(buffer2));
+    bytes_read=read(sockfd_control, buffer, 512);
+    buffer[bytes_read] = '\0';
+    printf("%s", buffer);
+    if(0 != strncmp(buffer,"227",3)){
+        printf("Error: Unexpected reply from connection.\n");
+        exit(-1);
+    }
+
+    // Going into passive mode (client connecting to the server)
+    int h1=0, h2=0, h3=0, h4=0, p1=0, p2=0, pasvport;
+    sscanf(buffer, "227 Entering Passive Mode (%i,%i,%i,%i,%i,%i).", &h1, &h2, &h3, &h4, &p1, &p2);
+    pasvport = p1*256+p2;
+
+    int sockfd_data;
+    struct sockaddr_in server_address2;
+
+    // Server address handling
+    sprintf(buffer, "%i.%i.%i.%i", h1, h2, h3, h4);
+    bzero((char *) &server_address2, sizeof(server_address2));
+    server_address2.sin_family = AF_INET;
+    server_address2.sin_addr.s_addr = inet_addr(buffer);  /*32 bit Internet address network byte ordered*/
+    server_address2.sin_port = htons(pasvport);        /*server TCP port must be network byte ordered */
+
+    if ((sockfd_data = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Error on socket()");
+        exit(-1);
+    }
+
+    // Connecting to the server (establishing data channel)
+    if (connect(sockfd_data,
+                (struct sockaddr *) &server_address2,
+                sizeof(server_address2)) < 0) {
+        perror("Error on connect()");
+        exit(-1);
+
+    }
+
+    // Sending a retr so we can download a copy of a file on the server
+    sprintf(buffer2, "retr %s\r\n", url_path);
+    bytes = write(sockfd_control, buffer2, strlen(buffer2));
+
+    if (bytes > 0)
+        printf("Bytes written %ld\n", bytes);
+    else {
+        perror("Error on write()");
+        exit(-1);
+    }
+
+    // Receiving the file
+    bytes_read = read(sockfd_control, buffer, 512);
+    buffer[bytes_read] = '\0';
+    if(0 != strncmp(buffer,"150",3)){
+        printf("%sClosing\n",buffer);    
+        if (close(sockfd_control)<0) {
+            perror("close()");
+            exit(-1);
+        }
+        if (close(sockfd_data)<0) {
+            perror("close()");
+            exit(-1);
+        }
+        return -1;
+    }
+    printf("%s\nReceiving File....\n", buffer);
+    FILE *f = fopen("file","w");
+
+    // File not created, exiting with error
+    if(f == NULL){
+        printf("Unable to create file locally.\n");
+        exit(EXIT_FAILURE);
+    }
+    // Creating the file
+    while((bytes_read = read(sockfd_data, buffer, 512)) > 0){
+        fwrite(buffer, 1, bytes_read, f);
+    }
+    printf("The file was received!\n");
+
+    // Closing the socketsS
+    if (close(sockfd_control) < 0) {
+        perror("Error on close()");
+        exit(-1);
+    }
+    if (close(sockfd_data) < 0) {
+        perror("Error on close()");
+        exit(-1);
+    }
+    return 0;
+
 }
