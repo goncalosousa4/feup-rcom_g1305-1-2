@@ -176,32 +176,43 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
 
 int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     char response[BUFFER_SIZE];
+    char *start = NULL;
+    char *end = NULL;
+    int h1 = 0, h2 = 0, h3 = 0, h4 = 0, p1 = 0, p2 = 0;
 
+    // Enviar comando PASV al servidor FTP
     if (ftp_command(sockfd, "PASV", response, BUFFER_SIZE) < 0) {
+        fprintf(stderr, "Error ejecutando el comando PASV\n");
         return -1;
     }
 
-    char *start = strchr(response, '(');
-    char *end = strchr(response, ')');
+    printf("Respuesta del comando PASV: %s\n", response);
+
+    // Buscar los paréntesis en la respuesta
+    start = strchr(response, '(');
+    end = strchr(response, ')');
+
     if (!start || !end || start >= end) {
-        fprintf(stderr, "Invalid PASV response format\n");
-        fprintf(stderr, "Response received: %s\n", response);
+        fprintf(stderr, "Formato de respuesta PASV no válido\n");
+        fprintf(stderr, "Respuesta recibida: %s\n", response);
         return -1;
     }
 
-    int h1, h2, h3, h4, p1, p2;
+    // Extraer valores IP y puerto de la respuesta
     if (sscanf(start, "(%d,%d,%d,%d,%d,%d)", &h1, &h2, &h3, &h4, &p1, &p2) != 6) {
-        fprintf(stderr, "Error parsing PASV response\n");
-        fprintf(stderr, "Response received: %s\n", response);
+        fprintf(stderr, "Error al analizar la respuesta PASV\n");
+        fprintf(stderr, "Respuesta recibida: %s\n", response);
         return -1;
     }
 
+    // Construir la dirección IP y calcular el puerto
     snprintf(data_ip, BUFFER_SIZE, "%d.%d.%d.%d", h1, h2, h3, h4);
-    *data_port = p1 * 256 + p2;
+    *data_port = (p1 << 8) + p2;
 
-    printf("Passive mode - IP: %s, Port: %d\n", data_ip, *data_port);
+    printf("Modo pasivo - IP: %s, Puerto: %d\n", data_ip, *data_port);
     return 0;
 }
+
 
 // File Handling
 int download_file(int data_sockfd, const char *path) {
