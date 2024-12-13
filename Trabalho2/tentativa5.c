@@ -230,33 +230,55 @@ int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
 
 
 // File Handling
-int download_file(int data_sockfd, const char *path) {
+// File Handling
+FILE *open_file(const char *path) {
     const char *filename = get_filename(path);
     if (strlen(filename) > 255) {
-        fprintf(stderr, "Filename too long\n");
-        return -1;
+        fprintf(stderr, "Filename too long: %s\n", filename);
+        return NULL;
     }
 
     FILE *file = fopen(filename, "wb");
     if (!file) {
         perror("Error opening file");
-        return -1;
     }
 
+    return file;
+}
+
+int transfer_data(int data_sockfd, FILE *file) {
     char buffer[BUFFER_SIZE];
     ssize_t bytes_read;
+
     while ((bytes_read = read(data_sockfd, buffer, BUFFER_SIZE)) > 0) {
-        fwrite(buffer, 1, bytes_read, file);
+        if (fwrite(buffer, 1, bytes_read, file) != bytes_read) {
+            perror("Error writing to file");
+            return -1;
+        }
     }
 
     if (bytes_read < 0) {
         perror("Error reading from data socket");
+        return -1;
+    }
+
+    return 0;
+}
+
+int download_file(int data_sockfd, const char *path) {
+    FILE *file = open_file(path);
+    if (!file) {
+        return -1;
+    }
+
+    printf("Starting file download: %s\n", get_filename(path));
+    if (transfer_data(data_sockfd, file) < 0) {
         fclose(file);
         return -1;
     }
 
     fclose(file);
-    printf("File downloaded successfully: %s\n", filename);
+    printf("File downloaded successfully: %s\n", get_filename(path));
     return 0;
 }
 
