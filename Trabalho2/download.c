@@ -76,9 +76,18 @@ void modoPassivo(int socketCtrl, char *ip, int *porta) {
     char resposta[BUFFER_SIZE];
     enviarComando(socketCtrl, "PASV", resposta);
 
-    int ip1, ip2, ip3, ip4, p1, p2;
-    if (sscanf(resposta, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)", &ip1, &ip2, &ip3, &ip4, &p1, &p2) != 6) {
+    // Buscar os parâmetros de IP e porta na resposta
+    char *inicio = strchr(resposta, '(');
+    char *fim = strchr(resposta, ')');
+
+    if (!inicio || !fim || fim < inicio) {
         fprintf(stderr, "Erro ao interpretar a resposta do modo passivo\n");
+        exit(EXIT_FAILURE);
+    }
+
+    int ip1, ip2, ip3, ip4, p1, p2;
+    if (sscanf(inicio + 1, "%d,%d,%d,%d,%d,%d", &ip1, &ip2, &ip3, &ip4, &p1, &p2) != 6) {
+        fprintf(stderr, "Erro ao extrair IP e porta do modo passivo\n");
         exit(EXIT_FAILURE);
     }
 
@@ -154,3 +163,4 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
