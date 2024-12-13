@@ -16,7 +16,7 @@ int send_message(const char *server_ip, int server_port, const char *message) {
     size_t bytes;
 
     /* Server address handling */
-    bzero((char *) &server_addr, sizeof(server_addr));
+    memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr(server_ip);
     server_addr.sin_port = htons(server_port);
@@ -66,14 +66,13 @@ int get_ip_from_hostname(const char *hostname, char *ip_buffer, size_t buffer_si
     return 0;
 }
 
-
 const char *get_filename(const char *path) {
     const char *filename = strrchr(path, '/');
     return (filename != NULL) ? filename + 1 : path;
 }
 
-int parse_url(const char *url, char *user, char *password, char *host, char *path) {
-        // Verifica que la URL comience con "ftp://"
+int parse_url(const char *ftp_url, char *username, char *passwd, char *server, char *filepath) {
+    // Verifica que la URL comience con "ftp://"
     if (strncmp(ftp_url, "ftp://", 6) != 0) {
         return -1;
     }
@@ -114,7 +113,6 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
     strcpy(filepath, slash + 1);
 
     return 0;
-
 }
 
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
@@ -127,27 +125,14 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
     }
 
     memset(response, 0, response_size);
-    while (1) {
-        ssize_t bytes_read = read(sockfd, response, response_size - 1);
-        if (bytes_read <= 0) {
-            perror("Error reading response");
-            return -1;
-        }
-
-        response[bytes_read] = '\0';
-        printf("Server Response: %s", response);
-
-        if (response[0] == '1' || response[0] == '2' || response[0] == '3') {
-            if (strstr(command, "PASV") == NULL) {
-                break;
-            }
-            if (strstr(command, "PASV") != NULL && strstr(response, "(") != NULL) {
-                break;
-            }
-        }
-
-        printf("Intermediate Response: %s", response);
+    ssize_t bytes_read = read(sockfd, response, response_size - 1);
+    if (bytes_read <= 0) {
+        perror("Error reading response");
+        return -1;
     }
+
+    response[bytes_read] = '\0';
+    printf("Server Response: %s", response);
 
     return 0;
 }
