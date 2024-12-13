@@ -88,41 +88,51 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
     return 0;
 }
 
-// FTP Command Handling
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
     char buffer[BUFFER_SIZE];
 
+    // Formatear el comando con terminador CRLF
     snprintf(buffer, BUFFER_SIZE, "%s\r\n", command);
+
+    // Enviar el comando al servidor
     if (write(sockfd, buffer, strlen(buffer)) < 0) {
-        perror("Error sending command");
+        perror("Error al enviar el comando");
         return -1;
     }
 
+    // Inicializar el buffer de respuesta
     memset(response, 0, response_size);
+
     while (1) {
+        // Leer datos del socket
         ssize_t bytes_read = read(sockfd, response, response_size - 1);
         if (bytes_read <= 0) {
-            perror("Error reading response");
+            perror("Error al leer la respuesta");
             return -1;
         }
 
+        // Finalizar la cadena de la respuesta
         response[bytes_read] = '\0';
-        printf("Server Response: %s", response);
+        printf("Respuesta del servidor: %s", response);
 
+        // Verificar los códigos de respuesta
         if (response[0] == '1' || response[0] == '2' || response[0] == '3') {
-            if (strstr(command, "PASV") == NULL) {
-                break;
+            if (!strstr(command, "PASV")) {
+                break; // Finalizar si no es "PASV"
             }
-            if (strstr(command, "PASV") != NULL && strstr(response, "(") != NULL) {
-                break;
+            if (strstr(command, "PASV") && strstr(response, "(") != NULL) {
+                break; // Finalizar si es "PASV" con formato correcto
             }
         }
 
-        printf("Intermediate Response: %s", response);
+        // Respuesta intermedia
+        printf("Respuesta intermedia: %s", response);
     }
 
     return 0;
 }
+
+
 
 int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     char response[BUFFER_SIZE];
