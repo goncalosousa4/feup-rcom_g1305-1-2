@@ -7,7 +7,65 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#define SERVER_PORT 6000
 #define BUFFER_SIZE 1024
+
+int send_message(const char *server_ip, int server_port, const char *message) {
+    int sockfd;
+    struct sockaddr_in server_addr;
+    size_t bytes;
+
+    /* Server address handling */
+    bzero((char *) &server_addr, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(server_ip);
+    server_addr.sin_port = htons(server_port);
+
+    /* Open a TCP socket */
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("socket()");
+        return -1;
+    }
+
+    /* Connect to the server */
+    if (connect(sockfd, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
+        perror("connect()");
+        close(sockfd);
+        return -1;
+    }
+
+    /* Send a string to the server */
+    bytes = write(sockfd, message, strlen(message));
+    if (bytes <= 0) {
+        perror("write()");
+        close(sockfd);
+        return -1;
+    }
+
+    printf("Bytes escritos: %ld\n", bytes);
+
+    if (close(sockfd) < 0) {
+        perror("close()");
+        return -1;
+    }
+
+    return 0;
+}
+
+int get_ip_from_hostname(const char *hostname, char *ip_buffer, size_t buffer_size) {
+    struct hostent *h;
+
+    if ((h = gethostbyname(hostname)) == NULL) {
+        herror("gethostbyname()");
+        return -1;
+    }
+
+    strncpy(ip_buffer, inet_ntoa(*((struct in_addr *) h->h_addr)), buffer_size - 1);
+    ip_buffer[buffer_size - 1] = '\0'; // Ensure null-termination
+
+    return 0;
+}
+
 
 const char *get_filename(const char *path) {
     const char *filename = strrchr(path, '/');
