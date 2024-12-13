@@ -188,13 +188,19 @@ int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
 
     printf("Respuesta del comando PASV: %s\n", response);
 
-    // Buscar los paréntesis en la respuesta
-    start = strchr(response, '(');
-    end = strchr(response, ')');
+    // Buscar los paréntesis manualmente
+    for (char *ptr = response; *ptr != '\0'; ptr++) {
+        if (*ptr == '(' && start == NULL) {
+            start = ptr; // Marcar el inicio del paréntesis
+        } else if (*ptr == ')' && start != NULL) {
+            end = ptr; // Marcar el cierre del paréntesis
+            break;
+        }
+    }
 
-    if (!start || !end || start >= end) {
+    // Validar si se encontraron ambos paréntesis y tienen el formato correcto
+    if (start == NULL || end == NULL || start >= end) {
         fprintf(stderr, "Formato de respuesta PASV no válido\n");
-        fprintf(stderr, "Respuesta recibida: %s\n", response);
         return -1;
     }
 
