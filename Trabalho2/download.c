@@ -114,7 +114,7 @@ void transferirFicheiro(int socketCtrl, const char *recurso) {
         return;
     }
 
-    FILE *ficheiro = fopen("ficheiro_descarregado", "wb");
+    FILE *ficheiro = fopen("pipe.txt", "wb");
     if (!ficheiro) {
         perror("Erro ao abrir ficheiro");
         close(socketDados);
@@ -129,7 +129,7 @@ void transferirFicheiro(int socketCtrl, const char *recurso) {
 
     fclose(ficheiro);
     close(socketDados);
-    printf("Transferência concluída.\n");
+    printf("Transferência concluída. Ficheiro salvo como 'pipe.txt'\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -163,4 +163,3 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
-
