@@ -72,14 +72,14 @@ const char *extract_filename(const char *filepath) {
 
 // Renombrada: Análisis de la URL FTP
 int decode_ftp_url(const char *ftp_url, char *username, char *passwd, char *server, char *filepath) {
-    if (sscanf(ftp_url, "ftp://%99[^:]:%99[^@]@%99[^/]/%199[^"]", username, passwd, server, filepath) == 4) {
+    if (sscanf(ftp_url, "ftp://%99[^:]:%99[^@]@%99[^/]/%199[^\n]", username, passwd, server, filepath) == 4) {
         return 0;
-    } else if (sscanf(ftp_url, "ftp://%99[^@]@%99[^/]/%199[^"]", username, server, filepath) == 3) {
-        strcpy(passwd, "anonymous");
+    } else if (sscanf(ftp_url, "ftp://%99[^@]@%99[^/]/%199[^\n]", username, server, filepath) == 3) {
+        strcpy(passwd, "rcom");
         return 0;
-    } else if (sscanf(ftp_url, "ftp://%99[^/]/%199[^"]", server, filepath) == 2) {
-        strcpy(username, "anonymous");
-        strcpy(passwd, "anonymous");
+    } else if (sscanf(ftp_url, "ftp://%99[^/]/%199[^\n]", server, filepath) == 2) {
+        strcpy(username, "rcom");
+        strcpy(passwd, "rcom");
         return 0;
     }
     return -1;
