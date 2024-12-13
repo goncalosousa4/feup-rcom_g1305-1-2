@@ -88,65 +88,86 @@ int parse_url(const char *url, char *user, char *password, char *host, char *pat
     return 0;
 }
 
-int is_valid_response_code(char cod_resp) {
-    return (cod_resp >= '1' && cod_resp <= '3');
+typedef enum {
+    INIT,
+    READING,
+    VALIDATING,
+    DONE
+} ProcessState;
+
+int validate_response_code(char resp_code) {
+    return (resp_code >= '1' && resp_code <= '3');
 }
 
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
-    char buffer[BUFFER_SIZE];
+    char cmd_buffer[BUFFER_SIZE];
     ssize_t bytes_read;
-    char cod_resp;
+    char resp_code;
+    ProcessState state = INIT;
 
     // Formatear el comando con terminador CRLF
-    snprintf(buffer, BUFFER_SIZE, "%s\r\n", command);
+    snprintf(cmd_buffer, BUFFER_SIZE, "%s\r\n", command);
 
     // Enviar el comando al servidor
-    if (write(sockfd, buffer, strlen(buffer)) < 0) {
-        perror("Error al enviar el comando");
+    if (write(sockfd, cmd_buffer, strlen(cmd_buffer)) < 0) {
+        perror("Error enviando el comando al servidor");
         return -1;
     }
-
-    printf("Comando enviado al servidor: %s\n", command);
+    printf("[DEBUG] Comando enviado: %s\n", command);
 
     // Inicializar el buffer de respuesta
     memset(response, 0, response_size);
 
-    // Usar un ciclo for para manejar las lecturas
-    for (;;) {
-        // Leer datos del socket
-        bytes_read = read(sockfd, response, response_size - 1);
-        if (bytes_read <= 0) {
-            perror("Error al leer la respuesta");
-            return -1;
+    // Ciclo para manejar el proceso
+    while (state != DONE) {
+        switch (state) {
+            case INIT:
+                printf("[DEBUG] Iniciando lectura...\n");
+                state = READING;
+                break;
+
+            case READING:
+                bytes_read = read(sockfd, response, response_size - 1);
+                if (bytes_read <= 0) {
+                    perror("Error leyendo la respuesta del servidor");
+                    return -1;
+                }
+                response[bytes_read] = '\0';  // Finalizar la cadena
+                printf("[DEBUG] Respuesta parcial recibida (%ld bytes): %s", bytes_read, response);
+                state = VALIDATING;
+                break;
+
+            case VALIDATING:
+                resp_code = response[0];
+                if (validate_response_code(resp_code)) {
+                    printf("[DEBUG] Código de respuesta válido detectado: %c\n", resp_code);
+
+                    if (!strstr(command, "MODO_PASIVO")) {
+                        printf("[DEBUG] Comando estándar, finalizando lectura.\n");
+                        state = DONE;
+                    } else if (strstr(command, "MODO_PASIVO") && strstr(response, "(") != NULL) {
+                        printf("[DEBUG] Respuesta válida para modo pasivo. Finalizando.\n");
+                        state = DONE;
+                    } else {
+                        printf("[DEBUG] Respuesta incompleta para modo pasivo. Continuando lectura.\n");
+                        state = READING;
+                    }
+                } else {
+                    printf("[DEBUG] Código de respuesta no válido: %c. Continuando lectura.\n", resp_code);
+                    state = READING;
+                }
+                break;
+
+            case DONE:
+                break;
+
+            default:
+                fprintf(stderr, "Estado desconocido. Abortando.\n");
+                return -1;
         }
-
-        // Finalizar la cadena de la respuesta
-        response[bytes_read] = '\0';
-        printf("Respuesta del servidor recibida (%ld bytes): %s", bytes_read, response);
-
-        // Verificar los códigos de respuesta de manera diferente
-        cod_resp = response[0];
-        if (cod_resp >= '1' && cod_resp <= '3') {
-            printf("Código de respuesta válido detectado: %c\n", cod_resp);
-
-            // Usar un indicador genérico en lugar de "PASV"
-            if (!strstr(command, "MODO_PASIVO")) {
-                printf("Comando no requiere modo pasivo. Finalizando lectura.\n");
-                break; // Finalizar si no es "MODO_PASIVO"
-            }
-            if (strstr(command, "MODO_PASIVO") && strstr(response, "(") != NULL) {
-                printf("Modo pasivo detectado con respuesta válida. Finalizando lectura.\n");
-                break; // Finalizar si es "MODO_PASIVO" con formato correcto
-            }
-        } else {
-            printf("Código de respuesta no válido: %c\n", cod_resp);
-        }
-
-        // Respuesta intermedia
-        printf("Respuesta intermedia: %s", response);
     }
 
-    printf("Lectura de respuesta completada.\n");
+    printf("[DEBUG] Proceso completado exitosamente.\n");
     return 0;
 }
 
