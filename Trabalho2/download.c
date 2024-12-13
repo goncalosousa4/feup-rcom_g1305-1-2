@@ -28,9 +28,19 @@ void analisarURL(const char *url, char *utilizador, char *senha, char *host, cha
     }
 }
 
+// Função para resolver o host e verificar se é válido
+void resolverHost(const char *host, char *ip_resolvido) {
+    struct hostent *servidor = gethostbyname(host);
+    if (!servidor) {
+        fprintf(stderr, "Erro: Não foi possível resolver o host %s\n", host);
+        exit(EXIT_FAILURE);
+    }
+    strcpy(ip_resolvido, inet_ntoa(*((struct in_addr *)servidor->h_addr)));
+    printf("Host resolvido: %s -> %s\n", host, ip_resolvido);
+}
+
 // Função para conectar-se ao servidor FTP
-int conectarServidor(const char *host, int porta) {
-    struct hostent *servidor;
+int conectarServidor(const char *ip, int porta) {
     struct sockaddr_in endereco;
 
     int socketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -39,15 +49,9 @@ int conectarServidor(const char *host, int porta) {
         exit(EXIT_FAILURE);
     }
 
-    servidor = gethostbyname(host);
-    if (!servidor) {
-        fprintf(stderr, "Host inválido\n");
-        exit(EXIT_FAILURE);
-    }
-
     memset(&endereco, 0, sizeof(endereco));
     endereco.sin_family = AF_INET;
-    memcpy(&endereco.sin_addr.s_addr, servidor->h_addr, servidor->h_length);
+    endereco.sin_addr.s_addr = inet_addr(ip);
     endereco.sin_port = htons(porta);
 
     if (connect(socketFD, (struct sockaddr *)&endereco, sizeof(endereco)) < 0) {
@@ -64,7 +68,7 @@ void enviarComando(int socketFD, const char *comando, char *resposta) {
     write(socketFD, "\r\n", 2);
     memset(resposta, 0, BUFFER_SIZE);
     read(socketFD, resposta, BUFFER_SIZE);
-    printf("Resposta: %s", resposta);
+    printf("Comando enviado: %s\nResposta: %s", comando, resposta);
 }
 
 // Função para entrar no modo passivo e extrair informações de conexão
@@ -73,10 +77,14 @@ void modoPassivo(int socketCtrl, char *ip, int *porta) {
     enviarComando(socketCtrl, "PASV", resposta);
 
     int ip1, ip2, ip3, ip4, p1, p2;
-    sscanf(resposta, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)", &ip1, &ip2, &ip3, &ip4, &p1, &p2);
+    if (sscanf(resposta, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)", &ip1, &ip2, &ip3, &ip4, &p1, &p2) != 6) {
+        fprintf(stderr, "Erro ao interpretar a resposta do modo passivo\n");
+        exit(EXIT_FAILURE);
+    }
 
     sprintf(ip, "%d.%d.%d.%d", ip1, ip2, ip3, ip4);
     *porta = p1 * 256 + p2;
+    printf("Modo passivo: IP %s, Porta %d\n", ip, *porta);
 }
 
 // Função para transferir ficheiro do servidor
@@ -90,6 +98,12 @@ void transferirFicheiro(int socketCtrl, const char *recurso) {
     char comando[BUFFER_SIZE];
     sprintf(comando, "RETR %s", recurso);
     enviarComando(socketCtrl, comando, resposta);
+
+    if (strncmp(resposta, "150", 3) != 0) {
+        fprintf(stderr, "Erro ao iniciar transferência do ficheiro\n");
+        close(socketDados);
+        return;
+    }
 
     FILE *ficheiro = fopen("ficheiro_descarregado", "wb");
     if (!ficheiro) {
@@ -115,11 +129,12 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    char utilizador[BUFFER_SIZE], senha[BUFFER_SIZE], host[BUFFER_SIZE], recurso[BUFFER_SIZE];
+    char utilizador[BUFFER_SIZE], senha[BUFFER_SIZE], host[BUFFER_SIZE], recurso[BUFFER_SIZE], ip[BUFFER_SIZE];
     analisarURL(argv[1], utilizador, senha, host, recurso);
+    resolverHost(host, ip);
 
-    printf("Conectando ao servidor FTP: %s\n", host);
-    int socketCtrl = conectarServidor(host, 21);
+    printf("Conectando ao servidor FTP: %s (%s)\n", host, ip);
+    int socketCtrl = conectarServidor(ip, 21);
 
     char resposta[BUFFER_SIZE];
     read(socketCtrl, resposta, BUFFER_SIZE);
