@@ -11,26 +11,27 @@
 #define BUFFER_SIZE 1024
 
 typedef enum {
-    INIT,
-    READING,
-    VALIDATING,
-    DONE
-} ProcessState;
+    INICIO,       // Estado inicial
+    LENDO,        // Estado de leitura
+    VALIDANDO,    // Estado de validação
+    FINALIZADO    // Estado concluído
+} EstadoProcesso;
 
 
 // FTP Utility Functions
-int get_ip_from_hostname(const char *hostname, char *ip_buffer, size_t buffer_size) {
-    struct hostent *h;
-
-    if ((h = gethostbyname(hostname)) == NULL) {
-        herror("gethostbyname()");
-        return -1;
+int obter_ip_de_hostname(const char *hostname, char *ip_buffer, size_t buffer_size) {
+    struct hostent *host;
+    // Resolver o hostname para obter informações do host
+    if ((host = gethostbyname(hostname)) == NULL) {
+        //indicar o hostname problemático
+        fprintf(stderr, "Erro: Não foi possível resolver o hostname '%s'. Verifique se o nome está correto.\n", hostname);
+        return -1; // Indicar falha na resolução
     }
-
+    // Copiar o endereço IP obtido para o buffer de saída
     strncpy(ip_buffer, inet_ntoa(*((struct in_addr *) h->h_addr)), buffer_size - 1);
-    ip_buffer[buffer_size - 1] = '\0'; // Ensure null-termination
+    ip_buffer[buffer_size - 1] = '\0'; // Garantir que o buffer esteja terminado em nulo
 
-    return 0;
+    return 0; // Retornar sucesso
 }
 
 const char *get_filename(const char *path) {
@@ -105,7 +106,7 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
     char cmd_buffer[BUFFER_SIZE];
     ssize_t bytes_read;
     char resp_code;
-    ProcessState state = INIT;
+    EstadoProcesso state = INICIO;
 
     // Formatear el comando con terminador CRLF
     snprintf(cmd_buffer, BUFFER_SIZE, "%s\r\n", command);
@@ -121,14 +122,14 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
     memset(response, 0, response_size);
 
     // Ciclo para manejar el proceso
-    while (state != DONE) {
+    while (state != FINALIZADO) {
         switch (state) {
-            case INIT:
+            case INICIO:
                 printf("[DEBUG] Iniciando lectura...\n");
-                state = READING;
+                state = LENDO;
                 break;
 
-            case READING:
+            case LENDO:
                 bytes_read = read(sockfd, response, response_size - 1);
                 if (bytes_read <= 0) {
                     perror("Error leyendo la respuesta del servidor");
@@ -136,31 +137,31 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
                 }
                 response[bytes_read] = '\0';  // Finalizar la cadena
                 printf("[DEBUG] Respuesta parcial recibida (%ld bytes): %s", bytes_read, response);
-                state = VALIDATING;
+                state = VALIDANDO;
                 break;
 
-            case VALIDATING:
+            case VALIDANDO:
                 resp_code = response[0];
                 if (validate_response_code(resp_code)) {
                     printf("[DEBUG] Código de respuesta válido detectado: %c\n", resp_code);
 
                     if (!strstr(command, "MODO_PASIVO")) {
                         printf("[DEBUG] Comando estándar, finalizando lectura.\n");
-                        state = DONE;
+                        state = FINALIZADO;
                     } else if (strstr(command, "MODO_PASIVO") && strstr(response, "(") != NULL) {
                         printf("[DEBUG] Respuesta válida para modo pasivo. Finalizando.\n");
-                        state = DONE;
+                        state = FINALIZADO;
                     } else {
                         printf("[DEBUG] Respuesta incompleta para modo pasivo. Continuando lectura.\n");
-                        state = READING;
+                        state = LENDO;
                     }
                 } else {
                     printf("[DEBUG] Código de respuesta no válido: %c. Continuando lectura.\n", resp_code);
-                    state = READING;
+                    state = LENDO;
                 }
                 break;
 
-            case DONE:
+            case FINALIZADO:
                 break;
 
             default:
@@ -385,7 +386,7 @@ int main(int argc, char *argv[]) {
     printf("User: %s, Password: %s, Host: %s, Path: %s\n", user, password, host, path);
 
     // Resolver hostname a IP
-    if (get_ip_from_hostname(host, ip_address, sizeof(ip_address)) < 0) {
+    if (obter_ip_de_hostname(host, ip_address, sizeof(ip_address)) < 0) {
         fprintf(stderr, "Failed to resolve hostname: %s\n", host);
         return 1;
     }

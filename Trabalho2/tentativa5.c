@@ -34,14 +34,26 @@ int get_ip_from_hostname(const char *hostname, char *ip_buffer, size_t buffer_si
 }
 
 const char *get_filename(const char *path) {
+    if (path == NULL || *path == '\0') {
+        fprintf(stderr, "Erro: Caminho fornecido é inválido ou vazio.\n");
+        return NULL; // Retornar NULL em caso de erro
+    }
+
     const char *filename = path;
     for (const char *current = path; *current != '\0'; current++) {
         if (*current == '/') {
-            filename = current + 1;  // Actualizamos el puntero después del último '/'
+            filename = current + 1;  // Atualizar o ponteiro após a última barra
         }
     }
+
+    if (*filename == '\0') {
+        fprintf(stderr, "Erro: Nenhum nome de ficheiro encontrado no caminho fornecido.\n");
+        return NULL; // Retornar NULL se não houver nome de ficheiro
+    }
+
     return filename;
 }
+
 
 int parse_url(const char *url, char *user, char *password, char *host, char *path) {
     const char *prefix = "ftp://";
