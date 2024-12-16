@@ -10,6 +10,14 @@
 #define SERVER_PORT 6000
 #define BUFFER_SIZE 1024
 
+typedef enum {
+    INIT,            // Estado inicial
+    READING,         // Estado de leitura
+    VALIDATING,      // Estado de validação
+    DONE             // Estado concluído
+} ProcessState;
+
+
 // Função: get_ip_from_hostname
 // Objetivo: Resolver um hostname e obter o endereço IP correspondente.
 // Parâmetros:
@@ -124,55 +132,103 @@ int analizarUrl(const char *url, char *user, char *password, char *host, char *p
 
     return 0;
 }
+// Função: validate_response_code
+// Objetivo: Validar se o código de resposta fornecido está dentro do intervalo esperado ('1' a '3').
+// Parâmetros:
+//   - resp_code: Caractere representando o código de resposta do servidor.
+// Retorna:
+//   - 1 se o código for válido.
+//   - 0 se o código for inválido, exibindo uma mensagem de erro.
+int validate_response_code(char resp_code) {
+    return (resp_code >= '1' && resp_code <= '3');
+}
 
+// Função: ftp_command
+// Objetivo: Enviar um comando FTP ao servidor, processar a resposta recebida e validar o código de resposta.
+// Parâmetros:
+//   - sockfd: Descritor do socket conectado ao servidor FTP.
+//   - command: Comando FTP a ser enviado.
+//   - response: Buffer para armazenar a resposta do servidor.
+//   - response_size: Tamanho máximo do buffer de resposta.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - -1 em caso de erro, exibindo mensagens apropriadas de depuração.
 int ftp_command(int sockfd, const char *command, char *response, size_t response_size) {
-    char buffer[BUFFER_SIZE];
-    ssize_t bytes_read;
-    char cod_resp;
+    char cmd_buffer[BUFFER_SIZE];   // Buffer para armazenar o comando formatado
+    ssize_t bytes_read;   // Número de bytes lidos do servidor
+    char resp_code;   // Código de resposta do servidor
+    ProcessState state = INIT;   // Estado inicial do processo
+    int complete = 0;
 
     // Formatear el comando con terminador CRLF
-    snprintf(buffer, BUFFER_SIZE, "%s\r\n", command);
+    snprintf(cmd_buffer, BUFFER_SIZE, "%s\r\n", command);
 
     // Enviar el comando al servidor
-    if (write(sockfd, buffer, strlen(buffer)) < 0) {
-        perror("Error al enviar el comando");
+    if (write(sockfd, cmd_buffer, strlen(cmd_buffer)) < 0) {
+        perror("Error enviando el comando al servidor");
         return -1;
     }
+    printf("[DEBUG] Comando enviado: %s\n", command);
 
     // Inicializar el buffer de respuesta
     memset(response, 0, response_size);
 
-    // Usar un ciclo for para manejar las lecturas
-    for (;;) {
-        // Leer datos del socket
-        bytes_read = read(sockfd, response, response_size - 1);
-        if (bytes_read <= 0) {
-            perror("Error al leer la respuesta");
-            return -1;
+    // Ciclo para manejar el proceso usando la máquina de estados
+    while (state != DONE) {
+        switch (state) {
+            case INIT:
+                printf("[DEBUG] Iniciando lectura...\n");
+                state = READING;
+                break;
+
+            case READING:
+                bytes_read = read(sockfd, response, response_size - 1);
+                if (bytes_read <= 0) {
+                    perror("Error leyendo la respuesta del servidor");
+                    return -1;
+                }
+                response[bytes_read] = '\0';
+                printf("[DEBUG] Respuesta parcial recibida (%ld bytes): %s", bytes_read, response);
+                state = VALIDATING;
+                break;
+
+            case VALIDATING:
+                resp_code = response[0];
+                if (validate_response_code(resp_code)) {
+                    printf("[DEBUG] Código de respuesta válido detectado: %c\n", resp_code);
+
+                    if (!strstr(command, "PASV")) {
+                        complete = 1;
+                    } else if (strstr(command, "PASV") && strstr(response, "(") != NULL) {
+                        complete = 1;
+                    }
+
+                    if (complete) {
+                        printf("[DEBUG] Respuesta completa procesada, finalizando.\n");
+                        state = DONE;
+                    } else {
+                        printf("[DEBUG] Respuesta incompleta para comando PASV, continuando lectura.\n");
+                        state = READING;
+                    }
+                } else {
+                    printf("[DEBUG] Código de respuesta no válido: %c. Continuando lectura.\n", resp_code);
+                    state = READING;
+                }
+                break;
+
+            case DONE:
+                break;
+
+            default:
+                fprintf(stderr, "Estado desconocido. Abortando.\n");
+                return -1;
         }
-
-        // Finalizar la cadena de la respuesta
-        response[bytes_read] = '\0';
-        printf("Respuesta del servidor: %s", response);
-
-        // Verificar los códigos de respuesta de manera diferente
-        cod_resp = response[0];
-        if (cod_resp >= '1' && cod_resp <= '3') {
-            // Usar un indicador genérico en lugar de "PASV"
-            if (!strstr(command, "MODO_PASIVO")) {
-                break; // Finalizar si no es "MODO_PASIVO"
-            }
-            if (strstr(command, "MODO_PASIVO") && strstr(response, "(") != NULL) {
-                break; // Finalizar si es "MODO_PASIVO" con formato correcto
-            }
-        }
-
-        // Respuesta intermedia
-        printf("Respuesta intermedia: %s", response);
     }
 
+    printf("[DEBUG] Proceso completado exitosamente.\n");
     return 0;
 }
+
 
 
 
@@ -287,7 +343,7 @@ int main(int argc, char *argv[]) {
     char user[100] = "", password[100] = "", host[100], path[200], ip[100];
     int control_sockfd = -1, data_sockfd = -1, data_port;
 
-    if (parse_url(url, user, password, host, path) < 0) {
+    if (analizarUrl(url, user, password, host, path) < 0) {
         fprintf(stderr, "Invalid FTP URL\n");
         return 1;
     }
