@@ -450,7 +450,6 @@ int send_message(const char *server_ip, int server_port, const char *message) {
 //   - 1 em caso de erro, exibindo mensagens apropriadas.
 int main(int argc, char *argv[]) {
 
-  int main(int argc, char *argv[]) {
     // Variables de conexión
     char user[100] = "", password[100] = "", host[100] = {0}, path[200] = {0}, ip[100] = {0};
     int control_sockfd = -1, data_sockfd = -1, data_port = 0;
@@ -548,4 +547,5 @@ close_control:
     if (control_sockfd >= 0) close(control_sockfd);
 
     return EXIT_SUCCESS;
+
 }
