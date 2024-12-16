@@ -229,7 +229,7 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
     return 0;
 }
 
-/ Função: extract_ip_port
+// Função: extract_ip_port
 // Objetivo: Extrair os componentes da IP e da porta a partir de uma string formatada no estilo (h1,h2,h3,h4,p1,p2).
 // Parâmetros:
 //   - start: Ponteiro para o início da string contendo os dados de IP e porta.
@@ -310,34 +310,30 @@ int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     return 0;
 }
 
-// File Handling
+// Função: download_file
+// Objetivo: Gerir o processo de download de um ficheiro a partir de um socket de dados para o sistema de ficheiros.
+// Parâmetros:
+//   - data_sockfd: Descritor do socket de onde os dados serão lidos.
+//   - path: Caminho completo para o ficheiro a ser criado no sistema local.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - -1 em caso de erro, exibindo mensagens de erro apropriadas.
 int download_file(int data_sockfd, const char *path) {
-    const char *filename = get_filename(path);
-    if (strlen(filename) > 255) {
-        fprintf(stderr, "Filename too long\n");
-        return -1;
-    }
-
-    FILE *file = fopen(filename, "wb");
+    FILE *file = open_file(path);
     if (!file) {
-        perror("Error opening file");
-        return -1;
+        return -1; // Indicar erro
     }
 
-    char buffer[BUFFER_SIZE];
-    ssize_t bytes_read;
-    while ((bytes_read = read(data_sockfd, buffer, BUFFER_SIZE)) > 0) {
-        fwrite(buffer, 1, bytes_read, file);
-    }
+    printf("Starting file download: %s\n", get_filename(path));
 
-    if (bytes_read < 0) {
-        perror("Error reading from data socket");
+    // Transferir os dados do socket para o ficheiro
+    if (transfer_data(data_sockfd, file) < 0) {
         fclose(file);
-        return -1;
+        return -1; // Indicar erro
     }
 
-    fclose(file);
-    printf("File downloaded successfully: %s\n", filename);
+    fclose(file);  // Fechar o ficheiro após o download
+    printf("File downloaded successfully: %s\n", get_filename(path));
     return 0;
 }
 
