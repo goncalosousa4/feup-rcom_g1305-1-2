@@ -440,84 +440,112 @@ int send_message(const char *server_ip, int server_port, const char *message) {
     return 0;
 }
 
-// Main Function
+// Função: main
+// Objetivo: Gerir a conexão FTP, realizar a autenticação, configurar o modo passivo e transferir um ficheiro do servidor.
+// Parâmetros:
+//   - argc: Contagem de argumentos recebidos.
+//   - argv: Vetor de argumentos recebidos da linha de comandos.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - 1 em caso de erro, exibindo mensagens apropriadas.
 int main(int argc, char *argv[]) {
+
+  int main(int argc, char *argv[]) {
+    // Variables de conexión
+    char user[100] = "", password[100] = "", host[100] = {0}, path[200] = {0}, ip[100] = {0};
+    int control_sockfd = -1, data_sockfd = -1, data_port = 0;
+    struct sockaddr_in server_addr;
+    char response[BUFFER_SIZE] = {0};
+    char command[BUFFER_SIZE] = {0};
+
+    // 1. Verificar argumentos
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <ftp-url>\n", argv[0]);
-        return 1;
+        fprintf(stderr, "Uso: %s <ftp-url>\n", argv[0]);
+        return EXIT_FAILURE;
     }
-
     const char *url = argv[1];
-    char user[100] = "", password[100] = "", host[100], path[200], ip[100];
-    int control_sockfd = -1, data_sockfd = -1, data_port;
 
+    // 2. Parsear la URL
     if (analizarUrl(url, user, password, host, path) < 0) {
-        fprintf(stderr, "Invalid FTP URL\n");
-        return 1;
+        fprintf(stderr, "URL FTP inválida\n");
+        return EXIT_FAILURE;
     }
-
     printf("User: %s, Password: %s, Host: %s, Path: %s\n", user, password, host, path);
 
+    // 3. Resolver hostname a IP
     if (get_ip_from_hostname(host, ip, sizeof(ip)) < 0) {
-        fprintf(stderr, "Failed to resolve hostname: %s\n", host);
-        return 1;
+        fprintf(stderr, "Error resolviendo hostname: %s\n", host);
+        return EXIT_FAILURE;
     }
     printf("Resolved IP: %s\n", ip);
 
+    // 4. Conexión al socket de control
     if ((control_sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket()");
-        return 1;
+        perror("Error creando socket de control");
+        return EXIT_FAILURE;
     }
-
-    struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(21);
     inet_pton(AF_INET, ip, &server_addr.sin_addr);
 
     if (connect(control_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("connect()");
+        perror("Error conectando al servidor FTP");
         close(control_sockfd);
-        return 1;
+        return EXIT_FAILURE;
     }
-
-    char response[BUFFER_SIZE];
     read(control_sockfd, response, BUFFER_SIZE);
-    printf("Connected to FTP server: %s\n", response);
+    printf("Conectado al servidor FTP: %s\n", response);
 
-    char command[BUFFER_SIZE];
+    // 5. Autenticación
     snprintf(command, BUFFER_SIZE, "USER %s", user);
-    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto cleanup;
+    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto close_control;
 
     snprintf(command, BUFFER_SIZE, "PASS %s", password);
-    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto cleanup;
+    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto close_control;
 
-    char data_ip[100];
-    if (setup_passive_mode(control_sockfd, data_ip, &data_port) < 0) goto cleanup;
-
-    if ((data_sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket()");
-        goto cleanup;
+    // 6. Configurar modo pasivo
+    char passive_ip[100] = {0};
+    if (setup_passive_mode(control_sockfd, passive_ip, &data_port) < 0) {
+        fprintf(stderr, "Error configurando modo pasivo\n");
+        goto close_control;
     }
+    printf("Modo pasivo: IP %s, Puerto %d\n", passive_ip, data_port);
 
+    // 7. Conexión al socket de datos
+    if ((data_sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Error creando socket de datos");
+        goto close_control;
+    }
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(data_port);
-    inet_pton(AF_INET, data_ip, &server_addr.sin_addr);
+    inet_pton(AF_INET, passive_ip, &server_addr.sin_addr);
 
     if (connect(data_sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("connect()");
-        goto cleanup;
+        perror("Error conectando al socket de datos");
+        goto close_data;
     }
 
+    // 8. Solicitar archivo (RETR)
     snprintf(command, BUFFER_SIZE, "RETR %s", path);
-    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) goto cleanup;
+    if (ftp_command(control_sockfd, command, response, BUFFER_SIZE) < 0) {
+        fprintf(stderr, "Error enviando comando RETR\n");
+        goto close_data;
+    }
 
-    if (download_file(data_sockfd, path) < 0) goto cleanup;
+    // 9. Descargar archivo
+    if (download_file(data_sockfd, path) < 0) {
+        fprintf(stderr, "Error descargando archivo\n");
+        goto close_data;
+    }
+    printf("Archivo descargado exitosamente\n");
 
-cleanup:
+    // 10. Cerrar sockets
+close_data:
     if (data_sockfd >= 0) close(data_sockfd);
+close_control:
     if (control_sockfd >= 0) close(control_sockfd);
 
-    return 0;
+    return EXIT_SUCCESS;
 }
