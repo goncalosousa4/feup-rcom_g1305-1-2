@@ -232,64 +232,84 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
 
 
 
-
-int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
-    char response[BUFFER_SIZE];
-
-    if (ftp_command(sockfd, "PASV", response, BUFFER_SIZE) < 0) {
-        return -1;
-    }
-
-    char *start = strchr(response, '(');
-    char *end = strchr(response, ')');
-    if (!start || !end || start >= end) {
-        fprintf(stderr, "Invalid PASV response format\n");
-        fprintf(stderr, "Response received: %s\n", response);
-        return -1;
-    }
-
-    int h1, h2, h3, h4, p1, p2;
-    if (sscanf(start, "(%d,%d,%d,%d,%d,%d)", &h1, &h2, &h3, &h4, &p1, &p2) != 6) {
-        fprintf(stderr, "Error parsing PASV response\n");
-        fprintf(stderr, "Response received: %s\n", response);
-        return -1;
-    }
-
-    snprintf(data_ip, BUFFER_SIZE, "%d.%d.%d.%d", h1, h2, h3, h4);
-    *data_port = p1 * 256 + p2;
-
-    printf("Passive mode - IP: %s, Port: %d\n", data_ip, *data_port);
-    return 0;
+// Função: extract_ip_port
+// Objetivo: Extrair os componentes da IP e da porta a partir de uma string formatada no estilo (h1,h2,h3,h4,p1,p2).
+// Parâmetros:
+//   - start: Ponteiro para o início da string contendo os dados de IP e porta.
+//   - h1, h2, h3, h4: Ponteiros para armazenar os quatro octetos da IP.
+//   - p1, p2: Ponteiros para armazenar os dois componentes do número da porta.
+// Retorna:
+//   - O número de valores extraídos com sucesso (deve ser 6 para sucesso completo).
+int extract_ip_port(const char *start, int *h1, int *h2, int *h3, int *h4, int *p1, int *p2) {
+    return sscanf(start, "(%d,%d,%d,%d,%d,%d)", h1, h2, h3, h4, p1, p2);
 }
 
-// File Handling
-int download_file(int data_sockfd, const char *path) {
-    const char *filename = get_filename(path);
-    if (strlen(filename) > 255) {
-        fprintf(stderr, "Filename too long\n");
+// Função: construct_ip_and_port
+// Objetivo: Construir uma string de endereço IP e calcular o número da porta com base nos valores fornecidos.
+// Parâmetros:
+//   - data_ip: Buffer para armazenar o endereço IP formatado.
+//   - buffer_size: Tamanho máximo do buffer de IP.
+//   - h1, h2, h3, h4: Os quatro octetos do endereço IP.
+//   - p1, p2: Os dois componentes do número da porta.
+//   - data_port: Ponteiro para armazenar o número calculado da porta.
+void construct_ip_and_port(char *data_ip, size_t buffer_size, int h1, int h2, int h3, int h4, int p1, int p2, int *data_port) {
+    // Construir dirección IP
+    snprintf(data_ip, buffer_size, "%d.%d.%d.%d", h1, h2, h3, h4);
+    // Calcular el puerto
+    *data_port = (p1 << 8) + p2;
+}
+
+// Função: setup_passive_mode
+// Objetivo: Configurar o modo passivo em uma conexão FTP, extraindo o endereço IP e o número da porta
+//           a partir da resposta do servidor ao comando PASV.
+// Parâmetros:
+//   - sockfd: Descritor do socket conectado ao servidor FTP.
+//   - data_ip: Buffer para armazenar o endereço IP do modo passivo.
+//   - data_port: Ponteiro para armazenar o número da porta do modo passivo.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - -1 em caso de erro, exibindo mensagens de depuração apropriadas.
+int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
+    char response[BUFFER_SIZE];
+    char *start = NULL;
+    char *end = NULL;
+    int h1 = 0, h2 = 0, h3 = 0, h4 = 0, p1 = 0, p2 = 0;
+
+    // Enviar comando PASV al servidor FTP
+    if (ftp_command(sockfd, "PASV", response, BUFFER_SIZE) < 0) {
+        fprintf(stderr, "Error ejecutando el comando PASV\n");
         return -1;
     }
 
-    FILE *file = fopen(filename, "wb");
-    if (!file) {
-        perror("Error opening file");
+    printf("Respuesta del comando PASV: %s\n", response);
+
+    // Buscar los paréntesis manualmente
+    for (char *ptr = response; *ptr != '\0'; ptr++) {
+        if (*ptr == '(' && start == NULL) {
+            start = ptr; // Marcar el inicio del paréntesis
+        } else if (*ptr == ')' && start != NULL) {
+            end = ptr; // Marcar el cierre del paréntesis
+            break;
+        }
+    }
+
+    // Validar si se encontraron ambos paréntesis y tienen el formato correcto
+    if (start == NULL || end == NULL || start >= end) {
+        fprintf(stderr, "Formato de respuesta PASV no válido\n");
         return -1;
     }
 
-    char buffer[BUFFER_SIZE];
-    ssize_t bytes_read;
-    while ((bytes_read = read(data_sockfd, buffer, BUFFER_SIZE)) > 0) {
-        fwrite(buffer, 1, bytes_read, file);
-    }
-
-    if (bytes_read < 0) {
-        perror("Error reading from data socket");
-        fclose(file);
+    // Llamar a la función auxiliar para extraer IP y puerto
+    if (extract_ip_port(start, &h1, &h2, &h3, &h4, &p1, &p2) != 6) {
+        fprintf(stderr, "Error al analizar la respuesta PASV\n");
+        fprintf(stderr, "Respuesta recibida: %s\n", response);
         return -1;
     }
 
-    fclose(file);
-    printf("File downloaded successfully: %s\n", filename);
+    // Usar función para construir IP y calcular puerto
+    construct_ip_and_port(data_ip, BUFFER_SIZE, h1, h2, h3, h4, p1, p2, data_port);
+
+    printf("Modo pasivo - IP: %s, Puerto: %d\n", data_ip, *data_port);
     return 0;
 }
 
