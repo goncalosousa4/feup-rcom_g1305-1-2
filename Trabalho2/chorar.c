@@ -10,21 +10,36 @@
 #define SERVER_PORT 6000
 #define BUFFER_SIZE 1024
 
-// FTP Utility Functions
+// Função: get_ip_from_hostname
+// Objetivo: Resolver um hostname e obter o endereço IP correspondente.
+// Parâmetros:
+//   - hostname: Nome do host a ser resolvido.
+//   - ip_buffer: Buffer para armazenar o endereço IP resolvido.
+//   - buffer_size: Tamanho do buffer de saída.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - -1 se a resolução falhar, exibindo uma mensagem de erro.
 int get_ip_from_hostname(const char *hostname, char *ip_buffer, size_t buffer_size) {
     struct hostent *h;
-
+    // Resolver o hostname para obter informações do host
     if ((h = gethostbyname(hostname)) == NULL) {
+        //indicar o hostname problemático
         herror("gethostbyname()");
-        return -1;
+        return -1;  // Indicar falha na resolução
     }
-
+    // Copiar o endereço IP obtido para o buffer de saída
     strncpy(ip_buffer, inet_ntoa(*((struct in_addr *) h->h_addr)), buffer_size - 1);
     ip_buffer[buffer_size - 1] = '\0'; // Ensure null-termination
-
+    // Retornar sucesso
     return 0;
 }
 
+// Função: get_filename
+// Objetivo: Extrair o nome do ficheiro a partir de um caminho fornecido.
+// Parâmetros:
+//   - path: Caminho completo para análise.
+// Retorna:
+//   - Ponteiro para o nome do ficheiro dentro da string original (ou NULL em caso de erro).
 const char *get_filename(const char *path) {
     if (path == NULL || *path == '\0') {
         fprintf(stderr, "Erro: Caminho fornecido é inválido ou vazio.\n");
@@ -46,7 +61,18 @@ const char *get_filename(const char *path) {
     return filename;
 }
 
-int parse_url(const char *url, char *user, char *password, char *host, char *path) {
+// Função: analizarUrl
+// Objetivo: Analisar um URL FTP para extrair informações como utilizador, senha, host e caminho.
+// Parâmetros:
+//   - url: O URL completo para análise.
+//   - user: Buffer para armazenar o nome do utilizador extraído.
+//   - password: Buffer para armazenar a senha extraída.
+//   - host: Buffer para armazenar o host extraído.
+//   - path: Buffer para armazenar o caminho extraído.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - -1 se o URL for inválido ou não puder ser analisado.
+int analizarUrl(const char *url, char *user, char *password, char *host, char *path) {
     const char *prefix = "ftp://";
     if (strncmp(url, prefix, strlen(prefix)) != 0) {
         return -1;
