@@ -388,29 +388,40 @@ int download_file(int data_sockfd, const char *path) {
     return 0;
 }
 
-
-// Message Sending
+// Função: send_message
+// Objetivo: Enviar uma mensagem para um servidor especificado via socket TCP.
+// Parâmetros:
+//   - server_ip: Endereço IP do servidor para o qual a mensagem será enviada.
+//   - server_port: Porta do servidor para a conexão.
+//   - message: Mensagem a ser enviada.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - -1 em caso de erro, exibindo mensagens de erro apropriadas.
 int send_message(const char *server_ip, int server_port, const char *message) {
     int sockfd;
     struct sockaddr_in server_addr;
-    size_t bytes;
+    size_t bytes; // Número de bytes enviados
 
+    // Inicializar a estrutura do endereço do servidor
     bzero((char *) &server_addr, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr(server_ip);
     server_addr.sin_port = htons(server_port);
-
+    
+    // Criar o socket TCP
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket()");
         return -1;
     }
 
+    // Estabelecer a conexão com o servidor
     if (connect(sockfd, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) {
         perror("connect()");
         close(sockfd);
         return -1;
     }
 
+    // Enviar a mensagem ao servidor
     bytes = write(sockfd, message, strlen(message));
     if (bytes <= 0) {
         perror("write()");
@@ -418,13 +429,14 @@ int send_message(const char *server_ip, int server_port, const char *message) {
         return -1;
     }
 
-    printf("Bytes escritos: %ld\n", bytes);
+    printf("Mensagem enviada com sucesso. Bytes escritos: %ld\n", bytes);
 
+    // Fechar o socket após o envio
     if (close(sockfd) < 0) {
         perror("close()");
         return -1;
     }
-
+    // Sucesso
     return 0;
 }
 
