@@ -310,6 +310,57 @@ int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     return 0;
 }
 
+// Função: open_file
+// Objetivo: Abrir um ficheiro para escrita binária, verificando o tamanho do nome do ficheiro e tratando erros.
+// Parâmetros:
+//   - path: Caminho completo do ficheiro a ser aberto.
+// Retorna:
+//   - Ponteiro para o ficheiro aberto em caso de sucesso.
+//   - NULL em caso de erro, exibindo mensagens de erro apropriadas.
+FILE *open_file(const char *path) {
+    // Obter o nome do ficheiro a partir do caminho completo
+    const char *filename = get_filename(path);
+    // Verificar se o nome do ficheiro excede o tamanho máximo permitido
+    if (strlen(filename) > 255) {
+        fprintf(stderr, "Filename too long: %s\n", filename);
+        return NULL;
+    }
+    // Tentar abrir o ficheiro para escrita binária
+    FILE *file = fopen(filename, "wb");
+    if (!file) {
+        perror("Error opening file");
+    }
+    // Retornar o ponteiro para o ficheiro aberto ou NULL
+    return file;
+}
+
+// Função: transfer_data
+// Objetivo: Transferir dados de um socket para um ficheiro, garantindo a escrita completa e tratando erros.
+// Parâmetros:
+//   - data_sockfd: Descritor do socket de onde os dados serão lidos.
+//   - file: Ponteiro para o ficheiro onde os dados serão escritos.
+// Retorna:
+//   - 0 em caso de sucesso.
+//   - -1 em caso de erro, exibindo mensagens de erro apropriadas.
+int transfer_data(int data_sockfd, FILE *file) {
+    char buffer[BUFFER_SIZE];  // Buffer para armazenar os dados lidos do socket
+    ssize_t bytes_read;  // Quantidade de bytes lidos do socket
+    // Ler dados do socket e escrever no ficheiro
+    while ((bytes_read = read(data_sockfd, buffer, BUFFER_SIZE)) > 0) {
+        if (fwrite(buffer, 1, bytes_read, file) != bytes_read) {
+            perror("Error writing to file");
+            return -1; // Indicar erro na escrita
+        }
+    }
+    // Verificar se ocorreu um erro na leitura do socket
+    if (bytes_read < 0) {
+        perror("Error reading from data socket");
+        return -1; // Indicar erro na leitura
+    }
+
+    return 0; // Sucesso
+}
+
 // Função: download_file
 // Objetivo: Gerir o processo de download de um ficheiro a partir de um socket de dados para o sistema de ficheiros.
 // Parâmetros:
@@ -336,6 +387,7 @@ int download_file(int data_sockfd, const char *path) {
     printf("File downloaded successfully: %s\n", get_filename(path));
     return 0;
 }
+
 
 // Message Sending
 int send_message(const char *server_ip, int server_port, const char *message) {
