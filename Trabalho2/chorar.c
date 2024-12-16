@@ -229,10 +229,7 @@ int ftp_command(int sockfd, const char *command, char *response, size_t response
     return 0;
 }
 
-
-
-
-// Função: extract_ip_port
+/ Função: extract_ip_port
 // Objetivo: Extrair os componentes da IP e da porta a partir de uma string formatada no estilo (h1,h2,h3,h4,p1,p2).
 // Parâmetros:
 //   - start: Ponteiro para o início da string contendo os dados de IP e porta.
@@ -310,6 +307,37 @@ int setup_passive_mode(int sockfd, char *data_ip, int *data_port) {
     construct_ip_and_port(data_ip, BUFFER_SIZE, h1, h2, h3, h4, p1, p2, data_port);
 
     printf("Modo pasivo - IP: %s, Puerto: %d\n", data_ip, *data_port);
+    return 0;
+}
+
+// File Handling
+int download_file(int data_sockfd, const char *path) {
+    const char *filename = get_filename(path);
+    if (strlen(filename) > 255) {
+        fprintf(stderr, "Filename too long\n");
+        return -1;
+    }
+
+    FILE *file = fopen(filename, "wb");
+    if (!file) {
+        perror("Error opening file");
+        return -1;
+    }
+
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_read;
+    while ((bytes_read = read(data_sockfd, buffer, BUFFER_SIZE)) > 0) {
+        fwrite(buffer, 1, bytes_read, file);
+    }
+
+    if (bytes_read < 0) {
+        perror("Error reading from data socket");
+        fclose(file);
+        return -1;
+    }
+
+    fclose(file);
+    printf("File downloaded successfully: %s\n", filename);
     return 0;
 }
 
